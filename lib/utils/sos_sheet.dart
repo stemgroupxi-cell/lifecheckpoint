@@ -122,12 +122,20 @@ class SosSheet {
                     backgroundColor: Color(0xFFFFEBEE),
                     child: Icon(Icons.phone, color: AppTheme.dangerRed),
                   ),
-                  title: const Text(
-                    'Call National Emergency 911',
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                  title: Text(
+                    isFil
+                        ? 'Tawagan ang National Emergency 911'
+                        : 'Call National Emergency 911',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 15,
+                    ),
                   ),
-                  subtitle:
-                      const Text('Police, Fire, Medical nationwide dispatch'),
+                  subtitle: Text(
+                    isFil
+                        ? 'Pulis, Bumbero, at Medikal sa buong bansa'
+                        : 'Police, Fire, Medical nationwide dispatch',
+                  ),
                   trailing: const Icon(Icons.call, color: AppTheme.dangerRed),
                   onTap: () {
                     Navigator.pop(ctx);
@@ -148,11 +156,20 @@ class SosSheet {
                       color: AppTheme.dangerRed,
                     ),
                   ),
-                  title: const Text(
-                    'Call Philippine Red Cross 143',
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                  title: Text(
+                    isFil
+                        ? 'Tawagan ang Philippine Red Cross 143'
+                        : 'Call Philippine Red Cross 143',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 15,
+                    ),
                   ),
-                  subtitle: const Text('Ambulance and humanitarian rescue'),
+                  subtitle: Text(
+                    isFil
+                        ? 'Ambulansya at rescue response'
+                        : 'Ambulance and humanitarian rescue',
+                  ),
                   trailing: const Icon(Icons.call, color: AppTheme.dangerRed),
                   onTap: () {
                     Navigator.pop(ctx);
@@ -173,12 +190,19 @@ class SosSheet {
                       color: Color(0xFFB45309),
                     ),
                   ),
-                  title: const Text(
-                    'Call Manila DRRMO (02) 8568-6909',
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                  title: Text(
+                    isFil
+                        ? 'Tawagan ang Manila DRRMO (02) 8568-6909'
+                        : 'Call Manila DRRMO (02) 8568-6909',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 15,
+                    ),
                   ),
-                  subtitle: const Text(
-                    'City of Manila 24/7 Rescue • 0932-662-2322 / 0950-700-3710',
+                  subtitle: Text(
+                    isFil
+                        ? 'Lungsod ng Maynila 24/7 Rescue • 0932-662-2322 / 0950-700-3710'
+                        : 'City of Manila 24/7 Rescue • 0932-662-2322 / 0950-700-3710',
                   ),
                   trailing:
                       const Icon(Icons.call, color: Color(0xFFB45309)),
@@ -254,8 +278,10 @@ class SosSheet {
                       fontSize: 15,
                     ),
                   ),
-                  subtitle: const Text(
-                    'Includes GPS coordinates & household name',
+                  subtitle: Text(
+                    isFil
+                        ? 'Kasama ang GPS coordinates at pangalan ng pamilya'
+                        : 'Includes GPS coordinates & household name',
                   ),
                   trailing: const Icon(Icons.send, color: AppTheme.safeGreen),
                   onTap: () {

@@ -2,7 +2,7 @@ import { resetSql } from '../server/lib/db.js';
 import { getPostgresStore } from '../server/lib/repository.js';
 import { handleApiRequest } from '../server/lib/router.js';
 
-const REQUEST_TIMEOUT_MS = 13_500;
+const REQUEST_TIMEOUT_MS = 18_000;
 
 export default {
   async fetch(request: Request): Promise<Response> {

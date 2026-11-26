@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/settings_provider.dart';
-import '../utils/app_strings.dart';
 import '../utils/app_theme.dart';
 import 'disaster_guide_screen.dart';
 import 'emergency_contacts_screen.dart';
@@ -17,7 +16,6 @@ class SafetyHubScreen extends StatelessWidget {
     final settings = context.watch<SettingsProvider>();
     final isDark = settings.isDarkMode;
     final isFil = settings.isFilipino;
-    final s = AppStrings(isFil);
 
     final activeColor =
         isDark ? Colors.lightBlue.shade200 : AppTheme.primaryNavy;
@@ -32,52 +30,70 @@ class SafetyHubScreen extends StatelessWidget {
             isFil ? 'Kaligtasan, Hotline at Plano' : 'Safety, Hotlines & Plan',
           ),
           bottom: TabBar(
-            isScrollable: true,
-            tabAlignment: TabAlignment.center,
+            isScrollable: false,
             indicatorColor: activeColor,
             indicatorWeight: 3,
             labelColor: activeColor,
             unselectedLabelColor: idleColor,
+            labelPadding: const EdgeInsets.symmetric(horizontal: 4),
             dividerColor: isDark ? AppTheme.darkBorder : AppTheme.lightBorder,
             labelStyle: const TextStyle(
-              fontSize: 14,
+              fontSize: 12.5,
               fontWeight: FontWeight.w700,
             ),
             unselectedLabelStyle: const TextStyle(
-              fontSize: 14,
+              fontSize: 12.5,
               fontWeight: FontWeight.w500,
             ),
             tabs: [
               Tab(
-                height: 48,
+                height: 46,
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(Icons.phone_in_talk_rounded, size: 18),
-                    const SizedBox(width: 6),
-                    Text(isFil ? 'Mga Hotline' : 'Hotlines'),
+                    const Icon(Icons.phone_in_talk_rounded, size: 16),
+                    const SizedBox(width: 4),
+                    Flexible(
+                      child: Text(
+                        isFil ? 'Hotline' : 'Hotlines',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
                   ],
                 ),
               ),
               Tab(
-                height: 48,
+                height: 46,
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(Icons.menu_book_rounded, size: 18),
-                    const SizedBox(width: 6),
-                    Text(s.disasterGuides),
+                    const Icon(Icons.menu_book_rounded, size: 16),
+                    const SizedBox(width: 4),
+                    Flexible(
+                      child: Text(
+                        isFil ? 'Gabay' : 'Guides',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
                   ],
                 ),
               ),
               Tab(
-                height: 48,
+                height: 46,
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(Icons.family_restroom_rounded, size: 18),
-                    const SizedBox(width: 6),
-                    Text(isFil ? 'Plano' : 'Family Plan'),
+                    const Icon(Icons.family_restroom_rounded, size: 16),
+                    const SizedBox(width: 4),
+                    Flexible(
+                      child: Text(
+                        isFil ? 'Plano' : 'Family Plan',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
                   ],
                 ),
               ),

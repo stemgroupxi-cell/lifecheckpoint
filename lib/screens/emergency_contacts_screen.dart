@@ -577,7 +577,7 @@ class _EmergencyContactsScreenState extends State<EmergencyContactsScreen> {
         onTap: onTap,
         borderRadius: BorderRadius.circular(16),
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(14),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -587,7 +587,7 @@ class _EmergencyContactsScreenState extends State<EmergencyContactsScreen> {
                   Text(
                     number,
                     style: const TextStyle(
-                      fontSize: 28,
+                      fontSize: 26,
                       fontWeight: FontWeight.w900,
                       color: Colors.white,
                       height: 1.0,
@@ -599,29 +599,31 @@ class _EmergencyContactsScreenState extends State<EmergencyContactsScreen> {
                       color: Colors.white.withAlpha(34),
                       borderRadius: BorderRadius.circular(10),
                     ),
-                    child: Icon(icon, color: Colors.white, size: 20),
+                    child: Icon(icon, color: Colors.white, size: 19),
                   ),
                 ],
               ),
               const SizedBox(height: 10),
               Text(
                 title,
-                maxLines: 1,
+                maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
-                  fontSize: 14.5,
+                  fontSize: 13.5,
                   fontWeight: FontWeight.w800,
                   color: Colors.white,
+                  height: 1.2,
                 ),
               ),
-              const SizedBox(height: 2),
+              const SizedBox(height: 3),
               Text(
                 subtitle,
-                maxLines: 1,
+                maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
-                  fontSize: 12,
+                  fontSize: 11.5,
                   color: Colors.white70,
+                  height: 1.25,
                 ),
               ),
             ],

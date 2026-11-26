@@ -487,22 +487,34 @@ export class PostgresStore implements DataStore {
 
   async getSyncBundle(householdId: string): Promise<SyncBundle | null> {
     const sql = await ensureSchema();
-    const household = await this.getHouseholdById(householdId);
-    if (!household) return null;
+    const householdRows = await sql`SELECT * FROM households WHERE id = ${householdId} LIMIT 1`;
+    if (householdRows.length === 0) return null;
+    const household = mapHouseholdRow(householdRows[0]);
 
-    const kitRows = await sql`
-      SELECT * FROM kit_items
-      WHERE household_id = ${householdId} AND deleted = FALSE
-      ORDER BY category_index ASC, name ASC
-    `;
-    const checkins = await this.getCheckins(householdId, 20);
-    const shelters = await this.getShelters(householdId);
+    const [kitRows, checkinRows, shelterRows] = await Promise.all([
+      sql`
+        SELECT * FROM kit_items
+        WHERE household_id = ${householdId} AND deleted = FALSE
+        ORDER BY category_index ASC, name ASC
+      `,
+      sql`
+        SELECT * FROM safety_checkins
+        WHERE household_id = ${householdId}
+        ORDER BY created_at DESC
+        LIMIT 20
+      `,
+      sql`
+        SELECT * FROM evacuation_centers
+        WHERE is_official = TRUE OR created_by_household_id = ${householdId}
+        ORDER BY is_official DESC, updated_at DESC
+      `,
+    ]);
 
     return {
       household,
       kitItems: kitRows.map(mapKitRow),
-      checkins,
-      shelters,
+      checkins: checkinRows.map(mapCheckinRow),
+      shelters: shelterRows.map(mapShelterRow),
     };
   }
 

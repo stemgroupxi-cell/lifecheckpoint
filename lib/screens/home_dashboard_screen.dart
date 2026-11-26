@@ -658,8 +658,8 @@ class HomeDashboardScreen extends StatelessWidget {
                                           ? 'Naka-save dito (${auth.pendingSyncCount} naghihintay)'
                                           : 'Saved on device (${auth.pendingSyncCount} pending)')
                                       : (isFil
-                                          ? 'Naka-save dito • Mag-sign in para sa backup'
-                                          : 'Saved on device • Sign in to back up'))),
+                                          ? 'Naka-save • Mag-sign in'
+                                          : 'Saved on device • Sign in'))),
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
                             fontSize: 12.5,
@@ -1006,7 +1006,7 @@ class HomeDashboardScreen extends StatelessWidget {
                     const SizedBox(height: 3),
                     Text(
                       weatherLine,
-                      maxLines: 2,
+                      maxLines: 3,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(fontSize: 13.5, color: subtleText),
                     ),
@@ -1977,7 +1977,7 @@ class _PwaInstallBannerState extends State<_PwaInstallBanner> {
             ),
             IconButton(
               icon: Icon(Icons.close_rounded, size: 18, color: widget.subtleText),
-              tooltip: 'Dismiss',
+              tooltip: widget.isFil ? 'Isara' : 'Dismiss',
               onPressed: _dismiss,
             ),
           ],

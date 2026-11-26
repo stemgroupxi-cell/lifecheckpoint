@@ -351,7 +351,7 @@ class _EvacuationMapScreenState extends State<EvacuationMapScreen> {
                           icon: Icons.local_police_rounded,
                           selected: emergency.selectedFacilityType ==
                               FacilityType.policeFire,
-                          color: Colors.indigo.shade600,
+                          color: Colors.indigo.shade800,
                           isDark: isDark,
                           onTap: () {
                             setState(() => _selectedCenter = null);
@@ -2366,7 +2366,7 @@ class _EvacuationMapScreenState extends State<EvacuationMapScreen> {
 
     if (saved == true && mounted) {
       final newCenter = EvacuationCenter(
-        id: const Uuid().v4(),
+        id: 'custom_${const Uuid().v4()}',
         name: name,
         address: addr.isEmpty ? 'Local Manila Barangay Site' : addr,
         city: city.isEmpty ? 'Manila' : city,

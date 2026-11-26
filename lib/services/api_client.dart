@@ -61,7 +61,7 @@ class ApiClient {
 
     try {
       final encodedBody = body != null ? json.encode(body) : null;
-      const reqTimeout = Duration(seconds: 15);
+      const reqTimeout = Duration(seconds: 20);
       late final http.Response resp;
 
       switch (method.toUpperCase()) {

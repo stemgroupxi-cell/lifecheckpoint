@@ -281,20 +281,39 @@ class EmergencyProvider extends ChangeNotifier {
   }
 
   Future<void> addCustomEvacuationCenter(EvacuationCenter center) async {
-    _customCenters.insert(0, center);
+    final normalizedId = center.id.startsWith('custom_')
+        ? center.id
+        : 'custom_${center.id}';
+    final safeCenter = normalizedId == center.id
+        ? center
+        : EvacuationCenter(
+            id: normalizedId,
+            name: center.name,
+            address: center.address,
+            city: center.city,
+            latitude: center.latitude,
+            longitude: center.longitude,
+            contactPerson: center.contactPerson,
+            contactNumber: center.contactNumber,
+            capacityPeople: center.capacityPeople,
+            isOpen: center.isOpen,
+            facilities: center.facilities,
+            facilityType: center.facilityType,
+          );
+    _customCenters.insert(0, safeCenter);
     notifyListeners();
     final centerMap = {
-      'id': center.id,
-      'name': center.name,
-      'address': center.address,
-      'city': center.city,
-      'latitude': center.latitude,
-      'longitude': center.longitude,
-      'contactPerson': center.contactPerson,
-      'contactNumber': center.contactNumber,
-      'capacityPeople': center.capacityPeople,
-      'isOpen': center.isOpen,
-      'facilities': center.facilities,
+      'id': safeCenter.id,
+      'name': safeCenter.name,
+      'address': safeCenter.address,
+      'city': safeCenter.city,
+      'latitude': safeCenter.latitude,
+      'longitude': safeCenter.longitude,
+      'contactPerson': safeCenter.contactPerson,
+      'contactNumber': safeCenter.contactNumber,
+      'capacityPeople': safeCenter.capacityPeople,
+      'isOpen': safeCenter.isOpen,
+      'facilities': safeCenter.facilities,
     };
     try {
       final prefs = await SharedPreferences.getInstance();

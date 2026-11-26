@@ -1,6 +1,6 @@
 // LifeCheckpoint True Offline-First Service Worker
 // Network-First (with fast fallback) for App Shell; Cache-First for CanvasKit, Fonts, Assets & Map Tiles
-const CACHE_NAME = 'lifecheckpoint-pwa-v38';
+const CACHE_NAME = 'lifecheckpoint-pwa-v39';
 const RUNTIME_CACHE_NAME = 'lifecheckpoint-runtime-v1';
 const TILE_CACHE_NAME = 'lifecheckpoint-map-tiles-v1';
 

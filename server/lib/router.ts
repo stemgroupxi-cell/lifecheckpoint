@@ -27,7 +27,10 @@ import type {
 const TELEMETRY_TTL_MS = 10 * 60 * 1000;
 const MAX_OTP_ATTEMPTS = 5;
 const RESET_RESEND_COOLDOWN_MS = 60 * 1000;
+const MAX_PLAN_JSON_BYTES = 32_768;
 const EMAIL_REGEX = /^[^\s@<>\r\n]+@[^\s@<>\r\n]+\.[^\s@<>\r\n]+$/;
+const UUID_REGEX =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function isValidEmail(email: string): boolean {
   return (
@@ -633,9 +636,49 @@ export async function handleApiRequest(
       if (!claims) return json({ error: 'Unauthorized' }, 401);
 
       const body = await parseJsonBody(req);
-      const items = Array.isArray(body.items)
-        ? (body.items as KitItemRecord[]).slice(0, 200)
-        : undefined;
+      let items: KitItemRecord[] | undefined;
+      if (Array.isArray(body.items)) {
+        items = [];
+        for (const raw of body.items.slice(0, 200)) {
+          if (!raw || typeof raw !== 'object') continue;
+          const obj = raw as Record<string, unknown>;
+          const id = typeof obj.id === 'string' ? obj.id.trim().slice(0, 80) : '';
+          const name = typeof obj.name === 'string' ? obj.name.trim().slice(0, 140) : '';
+          if (!id || !name) continue;
+          const catNum = typeof obj.category === 'number' && Number.isFinite(obj.category)
+            ? Math.max(0, Math.min(20, Math.round(obj.category)))
+            : 0;
+          const qtyNum = typeof obj.quantity === 'number' && Number.isFinite(obj.quantity)
+            ? Math.max(0, Math.min(100000, Math.round(obj.quantity)))
+            : 0;
+          const targetNum =
+            typeof obj.targetQuantity === 'number' && Number.isFinite(obj.targetQuantity)
+              ? Math.max(1, Math.min(100000, Math.round(obj.targetQuantity)))
+              : 1;
+          items.push({
+            id,
+            name,
+            category: catNum,
+            quantity: qtyNum,
+            targetQuantity: targetNum,
+            unit:
+              typeof obj.unit === 'string' && obj.unit.trim()
+                ? obj.unit.trim().slice(0, 32)
+                : 'pcs',
+            expirationDate:
+              typeof obj.expirationDate === 'string' && obj.expirationDate.trim()
+                ? obj.expirationDate.trim().slice(0, 40)
+                : null,
+            isPacked: Boolean(obj.isPacked),
+            notes: typeof obj.notes === 'string' ? obj.notes.trim().slice(0, 400) : '',
+            lastUpdated:
+              typeof obj.lastUpdated === 'string' && obj.lastUpdated.trim()
+                ? obj.lastUpdated.trim().slice(0, 40)
+                : new Date().toISOString(),
+            deleted: Boolean(obj.deleted),
+          });
+        }
+      }
       const profile =
         body.profile && typeof body.profile === 'object'
           ? (body.profile as HouseholdProfileData)
@@ -673,6 +716,9 @@ export async function handleApiRequest(
       if (!claims) return json({ error: 'Unauthorized' }, 401);
 
       const body = await parseJsonBody(req);
+      if (JSON.stringify(body).length > MAX_PLAN_JSON_BYTES) {
+        return json({ error: 'Emergency plan payload is too large.' }, 413);
+      }
       const saved = await store.updateEmergencyPlan(claims.householdId, body);
       return json({ plan: saved });
     }
@@ -850,7 +896,9 @@ export async function handleApiRequest(
         return json({ error: 'Admin authorization required.' }, 403);
       }
       const id = decodeURIComponent(path.slice('/admin/checkins/'.length)).trim();
-      if (!id) return json({ error: 'Check-in id is required.' }, 400);
+      if (!id || !UUID_REGEX.test(id)) {
+        return json({ error: 'Valid check-in id is required.' }, 400);
+      }
       const body = await parseJsonBody(req);
       const acknowledged = body.acknowledged !== false;
       const updated = await store.acknowledgeCheckin(
@@ -902,7 +950,9 @@ export async function handleApiRequest(
         return json({ error: 'Admin authorization required.' }, 403);
       }
       const id = decodeURIComponent(path.slice('/admin/advisories/'.length)).trim();
-      if (!id) return json({ error: 'Advisory id is required.' }, 400);
+      if (!id || !UUID_REGEX.test(id)) {
+        return json({ error: 'Valid advisory id is required.' }, 400);
+      }
       const body = await parseJsonBody(req);
       const rawSev = typeof body.severity === 'string' ? body.severity.toLowerCase() : undefined;
       const severity: AdvisorySeverity | undefined =
@@ -926,7 +976,9 @@ export async function handleApiRequest(
         return json({ error: 'Admin authorization required.' }, 403);
       }
       const id = decodeURIComponent(path.slice('/admin/advisories/'.length)).trim();
-      if (!id) return json({ error: 'Advisory id is required.' }, 400);
+      if (!id || !UUID_REGEX.test(id)) {
+        return json({ error: 'Valid advisory id is required.' }, 400);
+      }
       const deleted = await store.deleteAdvisory(id);
       if (!deleted) return json({ error: 'Advisory not found.' }, 404);
       return json({ deleted: true, id });

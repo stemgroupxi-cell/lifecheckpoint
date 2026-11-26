@@ -72,7 +72,7 @@ class EmergencyMonitoringScreen extends StatelessWidget {
     final syncText = mon.isOfflineMode
         ? (isFil ? 'Offline • Naka-save na datos' : 'Offline • Showing saved info')
         : (isFil
-            ? 'Updated ${mon.lastUpdated != null ? DateFormat('h:mm a').format(mon.lastUpdated!) : 'Ngayon'}'
+            ? 'Na-update ${mon.lastUpdated != null ? DateFormat('h:mm a').format(mon.lastUpdated!) : 'Ngayon'}'
             : 'Updated ${mon.lastUpdated != null ? DateFormat('h:mm a').format(mon.lastUpdated!) : 'Just now'}');
 
     return Scaffold(
