@@ -5,6 +5,24 @@ export type SqlClient = ReturnType<typeof postgres>;
 
 let sqlInstance: SqlClient | null = null;
 let schemaReadyPromise: Promise<void> | null = null;
+let schemaVerified = false;
+let lastHealthyAt = 0;
+let livenessPromise: Promise<void> | null = null;
+
+const STALE_IDLE_MS = 4_000;
+const PROBE_TIMEOUT_MS = 2_500;
+
+export function resetSql(): void {
+  const stale = sqlInstance;
+  sqlInstance = null;
+  lastHealthyAt = 0;
+  if (!schemaVerified) {
+    schemaReadyPromise = null;
+  }
+  if (stale) {
+    stale.end({ timeout: 1 }).catch(() => {});
+  }
+}
 
 export function getSql(): SqlClient {
   if (!sqlInstance) {
@@ -14,48 +32,95 @@ export function getSql(): SqlClient {
 
     sqlInstance = postgres(connectionString, {
       ssl: isLocal ? false : 'require',
-      max: 1,
-      idle_timeout: 5,
-      connect_timeout: 10,
+      max: 5,
+      idle_timeout: 10,
+      max_lifetime: 120,
+      connect_timeout: 8,
+      keep_alive: 15,
       prepare: false,
       fetch_types: false,
     });
+    lastHealthyAt = Date.now();
   }
   return sqlInstance;
 }
 
 export async function ensureSchema(): Promise<SqlClient> {
-  const sql = getSql();
-  if (!schemaReadyPromise) {
-    schemaReadyPromise = (async () => {
-      const check = await sql`
-        SELECT
-          to_regclass('public.drrm_advisories') AS ready,
-          EXISTS (
-            SELECT 1 FROM information_schema.columns
-            WHERE table_schema = 'public'
-              AND table_name = 'users'
-              AND column_name = 'token_version'
-          ) AS has_auth_hardening_cols
-      `;
-      if (!check[0]?.ready) {
-        await runBootstrap(sql);
-      } else if (!check[0]?.has_auth_hardening_cols) {
-        await sql`
-          ALTER TABLE users
-            ADD COLUMN IF NOT EXISTS password_reset_code_hash TEXT NULL,
-            ADD COLUMN IF NOT EXISTS password_reset_expires_at TIMESTAMPTZ NULL,
-            ADD COLUMN IF NOT EXISTS password_reset_attempts INTEGER NOT NULL DEFAULT 0,
-            ADD COLUMN IF NOT EXISTS password_reset_sent_at TIMESTAMPTZ NULL,
-            ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 1
-        `;
-      }
-    })().catch((err) => {
-      schemaReadyPromise = null;
-      throw err;
-    });
+  const now = Date.now();
+
+  // On Vercel Fluid Compute, warm containers can be frozen between invocations while
+  // Supabase's pooler or NAT drops idle TCP sockets. Probe once after >4s idle and
+  // immediately recycle the pool if half-open so the incoming request succeeds cleanly.
+  if (sqlInstance && schemaVerified && now - lastHealthyAt > STALE_IDLE_MS) {
+    if (!livenessPromise) {
+      const candidate = sqlInstance;
+      livenessPromise = (async () => {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          const probe = candidate`SELECT 1`;
+          probe.catch(() => {});
+          await Promise.race([
+            probe,
+            new Promise<never>((_, reject) => {
+              timer = setTimeout(
+                () => reject(new Error('Database liveness probe timed out')),
+                PROBE_TIMEOUT_MS,
+              );
+            }),
+          ]);
+          lastHealthyAt = Date.now();
+        } catch (err) {
+          console.warn('[LifeCheckpoint DB] Recycling stale pool after failed probe:', err);
+          if (sqlInstance === candidate) {
+            resetSql();
+          }
+        } finally {
+          if (timer) clearTimeout(timer);
+          livenessPromise = null;
+        }
+      })();
+    }
+    await livenessPromise;
   }
-  await schemaReadyPromise;
+
+  const sql = getSql();
+  if (!schemaVerified) {
+    if (!schemaReadyPromise) {
+      schemaReadyPromise = (async () => {
+        const check = await sql`
+          SELECT
+            to_regclass('public.drrm_advisories') AS ready,
+            EXISTS (
+              SELECT 1 FROM information_schema.columns
+              WHERE table_schema = 'public'
+                AND table_name = 'users'
+                AND column_name = 'token_version'
+            ) AS has_auth_hardening_cols
+        `;
+        if (!check[0]?.ready) {
+          await runBootstrap(sql);
+        } else if (!check[0]?.has_auth_hardening_cols) {
+          await sql`
+            ALTER TABLE users
+              ADD COLUMN IF NOT EXISTS password_reset_code_hash TEXT NULL,
+              ADD COLUMN IF NOT EXISTS password_reset_expires_at TIMESTAMPTZ NULL,
+              ADD COLUMN IF NOT EXISTS password_reset_attempts INTEGER NOT NULL DEFAULT 0,
+              ADD COLUMN IF NOT EXISTS password_reset_sent_at TIMESTAMPTZ NULL,
+              ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 1
+          `;
+        }
+        schemaVerified = true;
+        lastHealthyAt = Date.now();
+      })().catch((err) => {
+        schemaReadyPromise = null;
+        resetSql();
+        throw err;
+      });
+    }
+    await schemaReadyPromise;
+  } else {
+    lastHealthyAt = Date.now();
+  }
   return sql;
 }
 

@@ -62,6 +62,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
   bool _unlocked = false;
   bool _obscureAdminCode = true;
   bool _isLoading = false;
+  bool _isOverviewInFlight = false;
   bool _isPostingAdvisory = false;
   bool _autoRefreshEnabled = true;
   DateTime? _lastFetchedAt;
@@ -112,7 +113,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
     _autoRefreshTimer?.cancel();
     if (!_autoRefreshEnabled || !_unlocked) return;
     _autoRefreshTimer = Timer.periodic(const Duration(seconds: 30), (_) {
-      if (mounted && _unlocked && !_isLoading) {
+      if (mounted && _unlocked && !_isLoading && !_isOverviewInFlight) {
         _loadOverview(silent: true);
       }
     });
@@ -156,6 +157,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
     bool fromUnlock = false,
     bool silent = false,
   }) async {
+    if (_isOverviewInFlight && silent) return;
+    _isOverviewInFlight = true;
     final auth = context.read<AuthProvider>();
     if (!silent) {
       setState(() {
@@ -164,35 +167,42 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
       });
     }
 
-    final res = await auth.fetchAdminOverview(
-      adminCode: _activeAdminCode.isNotEmpty ? _activeAdminCode : null,
-    );
+    try {
+      final res = await auth.fetchAdminOverview(
+        adminCode: _activeAdminCode.isNotEmpty ? _activeAdminCode : null,
+      );
 
-    if (!mounted) return;
-    setState(() {
-      _isLoading = false;
-      if (res.ok && res.data != null) {
-        _overview = res.data;
-        _unlocked = true;
-        _lastFetchedAt = DateTime.now();
-        _error = null;
-      } else if (!silent) {
-        if (fromUnlock) _unlocked = false;
-        _error = res.error ?? 'Invalid Admin Code or server unreachable.';
-      }
-    });
-
-    // Keep local Nearby Map shelters immediately synced with Admin changes
-    if (res.ok && res.data != null && mounted) {
-      final rawShelters = res.data!['shelters'];
-      if (rawShelters is List) {
-        final mapped = rawShelters
-            .whereType<Map>()
-            .map((e) => Map<String, dynamic>.from(e))
-            .toList();
-        if (mapped.isNotEmpty) {
-          context.read<EmergencyProvider>().applyRemoteShelters(mapped);
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        if (res.ok && res.data != null) {
+          _overview = res.data;
+          _unlocked = true;
+          _lastFetchedAt = DateTime.now();
+          _error = null;
+        } else if (!silent) {
+          if (fromUnlock) _unlocked = false;
+          _error = res.error ?? 'Invalid Admin Code or server unreachable.';
         }
+      });
+
+      // Keep local Nearby Map shelters immediately synced with Admin changes
+      if (res.ok && res.data != null && mounted) {
+        final rawShelters = res.data!['shelters'];
+        if (rawShelters is List) {
+          final mapped = rawShelters
+              .whereType<Map>()
+              .map((e) => Map<String, dynamic>.from(e))
+              .toList();
+          if (mapped.isNotEmpty) {
+            context.read<EmergencyProvider>().applyRemoteShelters(mapped);
+          }
+        }
+      }
+    } finally {
+      _isOverviewInFlight = false;
+      if (mounted && _isLoading) {
+        setState(() => _isLoading = false);
       }
     }
   }
@@ -970,24 +980,29 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
     setState(() => _isPostingAdvisory = true);
     final auth = context.read<AuthProvider>();
     final monitoring = context.read<MonitoringProvider>();
-    final res = await auth.createAdvisory(
-      title: title,
-      message: message,
-      severity: _advisorySeverity,
-      area: area.isEmpty ? 'City of Manila' : area,
-      adminCode: _activeAdminCode.isNotEmpty ? _activeAdminCode : null,
-    );
-    if (!mounted) return;
-    setState(() => _isPostingAdvisory = false);
+    try {
+      final res = await auth.createAdvisory(
+        title: title,
+        message: message,
+        severity: _advisorySeverity,
+        area: area.isEmpty ? 'City of Manila' : area,
+        adminCode: _activeAdminCode.isNotEmpty ? _activeAdminCode : null,
+      );
+      if (!mounted) return;
 
-    if (res.ok) {
-      _advisoryTitleCtrl.clear();
-      _advisoryMsgCtrl.clear();
-      _showSnack('Official advisory published to all households!');
-      await _loadOverview(silent: true);
-      monitoring.refreshAdvisoriesOnly();
-    } else {
-      _showSnack(res.error ?? 'Could not publish advisory.', isError: true);
+      if (res.ok) {
+        _advisoryTitleCtrl.clear();
+        _advisoryMsgCtrl.clear();
+        _showSnack('Official advisory published to all households!');
+        await _loadOverview(silent: true);
+        monitoring.refreshAdvisoriesOnly();
+      } else {
+        _showSnack(res.error ?? 'Could not publish advisory.', isError: true);
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isPostingAdvisory = false);
+      }
     }
   }
 
