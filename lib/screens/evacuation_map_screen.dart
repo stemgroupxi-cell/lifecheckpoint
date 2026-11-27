@@ -31,6 +31,7 @@ class _EvacuationMapScreenState extends State<EvacuationMapScreen> {
 
   EvacuationCenter? _selectedCenter;
   bool _isPanningMobileMap = false;
+  double _currentZoom = 13.0;
 
   @override
   void dispose() {
@@ -681,6 +682,309 @@ class _EvacuationMapScreenState extends State<EvacuationMapScreen> {
     );
   }
 
+  // Subtle cartographic tile filters (100% compatible with offline OSM tile caching)
+  static const ColorFilter _lightMutedMapFilter = ColorFilter.matrix(<double>[
+    0.6693, 0.3004, 0.0303, 0, 12,
+    0.0893, 0.8804, 0.0303, 0, 12,
+    0.0893, 0.3004, 0.6103, 0, 14,
+    0,      0,      0,      1,  0,
+  ]);
+
+  static const ColorFilter _darkSlateMapFilter = ColorFilter.matrix(<double>[
+    -0.381, -0.363, -0.036, 0, 225,
+    -0.108, -0.636, -0.036, 0, 234,
+    -0.108, -0.363, -0.310, 0, 249,
+     0,      0,      0,     1,   0,
+  ]);
+
+  TileLayer _buildStyledTileLayer(bool isDark) {
+    return TileLayer(
+      urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+      userAgentPackageName: 'com.lifecheckpoint.app',
+      tileBuilder: (context, tileWidget, tile) => ColorFiltered(
+        colorFilter: isDark ? _darkSlateMapFilter : _lightMutedMapFilter,
+        child: tileWidget,
+      ),
+    );
+  }
+
+  EvacuationCenter? _findNearestOpenShelter(
+    EmergencyProvider emergency,
+    List<EvacuationCenter> centers,
+  ) {
+    final openShelters = centers
+        .where(
+          (c) => c.facilityType == FacilityType.evacuationShelter && c.isOpen,
+        )
+        .toList();
+    if (openShelters.isEmpty) return null;
+    openShelters.sort(
+      (a, b) => emergency
+          .distanceToCenterKm(a)
+          .compareTo(emergency.distanceToCenterKm(b)),
+    );
+    return openShelters.first;
+  }
+
+  int _markerZPriority(
+    EvacuationCenter center, {
+    required String? selectedId,
+    required String? nearestShelterId,
+  }) {
+    if (center.id == selectedId) return 4;
+    if (center.id == nearestShelterId) return 3;
+    if (!center.isOpen) return 0;
+    if (center.facilityType == FacilityType.evacuationShelter) return 2;
+    if (center.facilityType == FacilityType.hospital) return 1;
+    return 0;
+  }
+
+  List<Marker> _buildPriorityMarkers({
+    required List<EvacuationCenter> centers,
+    required LatLng userPoint,
+    required EvacuationCenter? selectedCenter,
+    required EvacuationCenter? nearestOpenShelter,
+    required double zoom,
+    required bool isFil,
+    required void Function(EvacuationCenter center) onSelectCenter,
+  }) {
+    final zoomedIn = zoom >= 13.8;
+    final selectedId = selectedCenter?.id;
+    final nearestId = nearestOpenShelter?.id;
+
+    // Sort bottom-to-top so primary shelters, selected pins & You NEVER get buried
+    final sorted = List<EvacuationCenter>.from(centers)
+      ..sort(
+        (a, b) => _markerZPriority(
+          a,
+          selectedId: selectedId,
+          nearestShelterId: nearestId,
+        ).compareTo(
+          _markerZPriority(
+            b,
+            selectedId: selectedId,
+            nearestShelterId: nearestId,
+          ),
+        ),
+      );
+
+    return [
+      ...sorted.map((center) {
+        final isSel = center.id == selectedId;
+        final isNearest = center.id == nearestId && !isSel;
+        final isHosp = center.facilityType == FacilityType.hospital;
+        final isPF = center.facilityType == FacilityType.policeFire;
+
+        final Color pinColor = !center.isOpen
+            ? Colors.blueGrey.shade500
+            : (isHosp
+                ? AppTheme.dangerRed
+                : (isPF ? Colors.indigo.shade700 : Colors.teal.shade700));
+        final IconData pinIcon = !center.isOpen
+            ? Icons.pause_circle_outline_rounded
+            : (isHosp
+                ? Icons.local_hospital_rounded
+                : (isPF
+                    ? Icons.local_police_rounded
+                    : Icons.roofing_rounded));
+
+        // Clear visual hierarchy: Shelters prominent, Hospitals medium, Police/Fire compact
+        final double dotSize = isSel
+            ? 42
+            : (isNearest
+                ? 34
+                : (isPF
+                    ? (zoomedIn ? 26 : 22)
+                    : (isHosp
+                        ? (zoomedIn ? 30 : 26)
+                        : (zoomedIn ? 34 : 30))));
+        final double iconSize = isSel
+            ? 20
+            : (isNearest
+                ? 17
+                : (isPF
+                    ? (zoomedIn ? 14 : 12)
+                    : (isHosp
+                        ? (zoomedIn ? 16 : 14)
+                        : (zoomedIn ? 18 : 16))));
+        final double hitBox = isSel ? 50 : (isNearest ? 46 : 36);
+
+        return Marker(
+          point: LatLng(center.latitude, center.longitude),
+          width: hitBox,
+          height: hitBox,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () => onSelectCenter(center),
+            child: Tooltip(
+              message:
+                  '${center.name}${isNearest ? (isFil ? ' • Pinakamalapit' : ' • Nearest Open') : ''}${center.isOpen ? '' : ' (Standby)'}',
+              child: Center(
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 160),
+                  width: isNearest ? dotSize + 10 : dotSize,
+                  height: isNearest ? dotSize + 10 : dotSize,
+                  decoration: isNearest
+                      ? BoxDecoration(
+                          color: Colors.teal.shade600.withAlpha(58),
+                          shape: BoxShape.circle,
+                        )
+                      : null,
+                  alignment: Alignment.center,
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 160),
+                    width: dotSize,
+                    height: dotSize,
+                    decoration: BoxDecoration(
+                      color: pinColor,
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: Colors.white,
+                        width: isSel ? 2.8 : (isPF ? 1.8 : 2.2),
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withAlpha(isSel ? 95 : 65),
+                          blurRadius: isSel ? 10 : 4,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: Icon(pinIcon, color: Colors.white, size: iconSize),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      }),
+      // User Location Blue Dot — ALWAYS rendered on top with prominent halo
+      Marker(
+        point: userPoint,
+        width: 40,
+        height: 40,
+        child: Tooltip(
+          message: isFil ? 'Iyong Lokasyon' : 'Your Location',
+          child: Center(
+            child: Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: const Color(0xFF2563EB).withAlpha(65),
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: const Color(0xFF2563EB).withAlpha(110),
+                  width: 1.5,
+                ),
+              ),
+              alignment: Alignment.center,
+              child: Container(
+                width: 16,
+                height: 16,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF2563EB),
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white, width: 2.8),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFF2563EB).withAlpha(140),
+                      blurRadius: 8,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ];
+  }
+
+  Widget _buildGroupedMapControls({
+    required bool isDark,
+    required bool isFil,
+    required bool hasLiveGps,
+    required VoidCallback onZoomIn,
+    required VoidCallback onZoomOut,
+    required VoidCallback onCenterUser,
+    required VoidCallback onCenterManila,
+  }) {
+    final bg = (isDark ? AppTheme.darkCard : Colors.white).withAlpha(244);
+    final border = isDark ? AppTheme.darkBorder : AppTheme.lightBorder;
+    final iconColor = isDark ? Colors.white : AppTheme.darkSlate;
+
+    Widget buildGroup(List<Widget> children) {
+      return Material(
+        color: bg,
+        elevation: 2.5,
+        shadowColor: Colors.black.withAlpha(55),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(11),
+          side: BorderSide(color: border),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Column(mainAxisSize: MainAxisSize.min, children: children),
+      );
+    }
+
+    Widget buildSlot({
+      required IconData icon,
+      required String tooltip,
+      required VoidCallback onTap,
+      Color? color,
+    }) {
+      return InkWell(
+        onTap: onTap,
+        child: Tooltip(
+          message: tooltip,
+          child: SizedBox(
+            width: 38,
+            height: 37,
+            child: Icon(icon, size: 19, color: color ?? iconColor),
+          ),
+        ),
+      );
+    }
+
+    final divider = Container(width: 24, height: 1, color: border);
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        buildGroup([
+          buildSlot(
+            icon: Icons.add_rounded,
+            tooltip: 'Zoom In',
+            onTap: onZoomIn,
+          ),
+          divider,
+          buildSlot(
+            icon: Icons.remove_rounded,
+            tooltip: 'Zoom Out',
+            onTap: onZoomOut,
+          ),
+        ]),
+        const SizedBox(height: 8),
+        buildGroup([
+          buildSlot(
+            icon: Icons.my_location_rounded,
+            tooltip: isFil ? 'Punta sa GPS Ko' : 'Center on Me',
+            color: hasLiveGps ? const Color(0xFF2563EB) : iconColor,
+            onTap: onCenterUser,
+          ),
+          divider,
+          buildSlot(
+            icon: Icons.location_city_rounded,
+            tooltip: isFil
+                ? 'I-center sa Lungsod ng Maynila'
+                : 'Center on City of Manila',
+            onTap: onCenterManila,
+          ),
+        ]),
+      ],
+    );
+  }
+
   Future<void> _openFullScreenNearbyMap(
     BuildContext context,
     EmergencyProvider emergency,
@@ -701,14 +1005,18 @@ class _EvacuationMapScreenState extends State<EvacuationMapScreen> {
     } catch (_) {}
 
     EvacuationCenter? activeSelected = _selectedCenter;
+    double fullZoom = startZoom;
 
     final pickedBack = await Navigator.of(context).push<EvacuationCenter?>(
       MaterialPageRoute(
         fullscreenDialog: true,
         builder: (ctx) => StatefulBuilder(
           builder: (ctx, setFullState) {
-            final showLine = activeSelected != null &&
-                emergency.distanceToCenterKm(activeSelected!) <= 30.0;
+            final nearestOpen = _findNearestOpenShelter(emergency, centers);
+            final guideTarget = activeSelected ?? nearestOpen;
+            final showLine = guideTarget != null &&
+                emergency.distanceToCenterKm(guideTarget) <= 30.0;
+            final isExplicitLine = activeSelected != null;
             final hasStandby = centers.any((c) => !c.isOpen);
 
             void moveFull(LatLng target, double zoom) {
@@ -744,6 +1052,14 @@ class _EvacuationMapScreenState extends State<EvacuationMapScreen> {
                       interactionOptions: const InteractionOptions(
                         flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
                       ),
+                      onPositionChanged: (camera, _) {
+                        final wasZoomed = fullZoom >= 13.8;
+                        final nowZoomed = camera.zoom >= 13.8;
+                        fullZoom = camera.zoom;
+                        if (wasZoomed != nowZoomed) {
+                          setFullState(() {});
+                        }
+                      },
                       onTap: (_, __) {
                         if (activeSelected != null) {
                           setFullState(() => activeSelected = null);
@@ -751,11 +1067,7 @@ class _EvacuationMapScreenState extends State<EvacuationMapScreen> {
                       },
                     ),
                     children: [
-                      TileLayer(
-                        urlTemplate:
-                            'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                        userAgentPackageName: 'com.lifecheckpoint.app',
-                      ),
+                      _buildStyledTileLayer(isDark),
                       if (showLine)
                         PolylineLayer(
                           polylines: [
@@ -763,144 +1075,54 @@ class _EvacuationMapScreenState extends State<EvacuationMapScreen> {
                               points: [
                                 userPoint,
                                 LatLng(
-                                  activeSelected!.latitude,
-                                  activeSelected!.longitude,
+                                  guideTarget.latitude,
+                                  guideTarget.longitude,
                                 ),
                               ],
-                              strokeWidth: 3.5,
-                              color: activeSelected!.isOpen
-                                  ? Colors.teal.shade700
-                                  : Colors.blueGrey.shade500,
+                              strokeWidth: isExplicitLine ? 3.5 : 2.6,
+                              color: (guideTarget.isOpen
+                                      ? (isDark
+                                          ? Colors.tealAccent.shade200
+                                          : Colors.teal.shade700)
+                                      : Colors.blueGrey.shade500)
+                                  .withAlpha(isExplicitLine ? 235 : 175),
                               pattern: StrokePattern.dashed(
-                                segments: const [10, 7],
+                                segments: const [9, 7],
                                 patternFit: PatternFit.scaleUp,
                               ),
                             ),
                           ],
                         ),
                       MarkerLayer(
-                        markers: [
-                          ...centers.map((center) {
-                            final isSel = activeSelected?.id == center.id;
-                            final isHosp =
-                                center.facilityType == FacilityType.hospital;
-                            final isPF =
-                                center.facilityType == FacilityType.policeFire;
-                            final Color pinColor = !center.isOpen
-                                ? Colors.blueGrey.shade500
-                                : (isHosp
-                                    ? AppTheme.dangerRed
-                                    : (isPF
-                                        ? Colors.indigo.shade600
-                                        : Colors.teal.shade700));
-                            final IconData pinIcon = !center.isOpen
-                                ? Icons.pause_circle_outline_rounded
-                                : (isHosp
-                                    ? Icons.local_hospital_rounded
-                                    : (isPF
-                                        ? Icons.local_police_rounded
-                                        : Icons.roofing_rounded));
-                            return Marker(
-                              point: LatLng(center.latitude, center.longitude),
-                              width: isSel ? 48 : 38,
-                              height: isSel ? 48 : 38,
-                              child: GestureDetector(
-                                onTap: () {
-                                  setFullState(() => activeSelected = center);
-                                  moveFull(
-                                    LatLng(center.latitude, center.longitude),
-                                    15.2,
-                                  );
-                                },
-                                child: AnimatedContainer(
-                                  duration: const Duration(milliseconds: 160),
-                                  decoration: BoxDecoration(
-                                    color: pinColor,
-                                    shape: BoxShape.circle,
-                                    border: Border.all(
-                                      color: Colors.white,
-                                      width: isSel ? 3 : 2.2,
-                                    ),
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: Colors.black.withAlpha(80),
-                                        blurRadius: isSel ? 10 : 5,
-                                        offset: const Offset(0, 2),
-                                      ),
-                                    ],
-                                  ),
-                                  child: Icon(
-                                    pinIcon,
-                                    color: Colors.white,
-                                    size: isSel ? 22 : 18,
-                                  ),
-                                ),
-                              ),
+                        markers: _buildPriorityMarkers(
+                          centers: centers,
+                          userPoint: userPoint,
+                          selectedCenter: activeSelected,
+                          nearestOpenShelter: nearestOpen,
+                          zoom: fullZoom,
+                          isFil: isFil,
+                          onSelectCenter: (center) {
+                            setFullState(() => activeSelected = center);
+                            moveFull(
+                              LatLng(center.latitude, center.longitude),
+                              15.2,
                             );
-                          }),
-                          Marker(
-                            point: userPoint,
-                            width: 32,
-                            height: 32,
-                            child: Container(
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF2563EB).withAlpha(55),
-                                shape: BoxShape.circle,
-                              ),
-                              alignment: Alignment.center,
-                              child: Container(
-                                width: 16,
-                                height: 16,
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFF2563EB),
-                                  shape: BoxShape.circle,
-                                  border: Border.all(
-                                    color: Colors.white,
-                                    width: 2.5,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
+                          },
+                        ),
                       ),
                     ],
                   ),
                   Positioned(
                     top: 12,
                     right: 12,
-                    child: Column(
-                      children: [
-                        _mapControlButton(
-                          icon: Icons.add_rounded,
-                          tooltip: 'Zoom In',
-                          isDark: isDark,
-                          onTap: () => zoomFull(1.0),
-                        ),
-                        const SizedBox(height: 6),
-                        _mapControlButton(
-                          icon: Icons.remove_rounded,
-                          tooltip: 'Zoom Out',
-                          isDark: isDark,
-                          onTap: () => zoomFull(-1.0),
-                        ),
-                        const SizedBox(height: 6),
-                        _mapControlButton(
-                          icon: Icons.my_location_rounded,
-                          tooltip: isFil ? 'Punta sa GPS Ko' : 'Center on Me',
-                          isDark: isDark,
-                          onTap: () => moveFull(userPoint, 14.5),
-                        ),
-                        const SizedBox(height: 6),
-                        _mapControlButton(
-                          icon: Icons.location_city_rounded,
-                          tooltip: isFil
-                              ? 'I-center sa Maynila'
-                              : 'Center on City of Manila',
-                          isDark: isDark,
-                          onTap: () => moveFull(_manilaCenter, 13.0),
-                        ),
-                      ],
+                    child: _buildGroupedMapControls(
+                      isDark: isDark,
+                      isFil: isFil,
+                      hasLiveGps: emergency.hasLiveGps,
+                      onZoomIn: () => zoomFull(1.0),
+                      onZoomOut: () => zoomFull(-1.0),
+                      onCenterUser: () => moveFull(userPoint, 14.5),
+                      onCenterManila: () => moveFull(_manilaCenter, 13.0),
                     ),
                   ),
                   if (activeSelected == null)
@@ -919,6 +1141,11 @@ class _EvacuationMapScreenState extends State<EvacuationMapScreen> {
                             color: (isDark ? AppTheme.darkCard : Colors.white)
                                 .withAlpha(240),
                             borderRadius: BorderRadius.circular(10),
+                            border: Border.all(
+                              color: isDark
+                                  ? AppTheme.darkBorder
+                                  : AppTheme.lightBorder,
+                            ),
                           ),
                           child: Wrap(
                             spacing: 10,
@@ -940,7 +1167,9 @@ class _EvacuationMapScreenState extends State<EvacuationMapScreen> {
                                 isDark,
                               ),
                               _legendDot(
-                                Colors.indigo.shade600,
+                                isDark
+                                    ? Colors.indigo.shade300
+                                    : Colors.indigo.shade700,
                                 isFil ? 'Pulis/Bumbero' : 'Police/Fire',
                                 isDark,
                               ),
@@ -998,93 +1227,21 @@ class _EvacuationMapScreenState extends State<EvacuationMapScreen> {
     final userPoint = LatLng(emergency.userLat, emergency.userLng);
     final initialFocus = isFarFromManila ? _manilaCenter : userPoint;
     final hasStandbyCenters = centers.any((c) => !c.isOpen);
+    final nearestOpen = _findNearestOpenShelter(emergency, centers);
+    final guideTarget = _selectedCenter ?? nearestOpen;
+    final isExplicitLine = _selectedCenter != null;
+    final showGuideLine = guideTarget != null &&
+        emergency.distanceToCenterKm(guideTarget) <= 30.0;
 
-    final markers = <Marker>[
-      // Facility Pins
-      ...centers.map((center) {
-        final isSelected = _selectedCenter?.id == center.id;
-        final isHospital = center.facilityType == FacilityType.hospital;
-        final isPoliceFire = center.facilityType == FacilityType.policeFire;
-        final Color pinColor = !center.isOpen
-            ? Colors.blueGrey.shade500
-            : (isHospital
-                ? AppTheme.dangerRed
-                : (isPoliceFire
-                    ? Colors.indigo.shade600
-                    : Colors.teal.shade700));
-        final IconData pinIcon = !center.isOpen
-            ? Icons.pause_circle_outline_rounded
-            : (isHospital
-                ? Icons.local_hospital_rounded
-                : (isPoliceFire
-                    ? Icons.local_police_rounded
-                    : Icons.roofing_rounded));
-
-        return Marker(
-          point: LatLng(center.latitude, center.longitude),
-          width: isSelected ? 48 : 38,
-          height: isSelected ? 48 : 38,
-          child: GestureDetector(
-            onTap: () => _focusCenter(center),
-            child: Tooltip(
-              message:
-                  '${center.name}${center.isOpen ? '' : ' (Standby)'}',
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 160),
-                decoration: BoxDecoration(
-                  color: pinColor,
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                    color: Colors.white,
-                    width: isSelected ? 3 : 2.2,
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withAlpha(80),
-                      blurRadius: isSelected ? 10 : 5,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
-                ),
-                child: Icon(
-                  pinIcon,
-                  color: Colors.white,
-                  size: isSelected ? 22 : 18,
-                ),
-              ),
-            ),
-          ),
-        );
-      }),
-      // User Location Blue Dot
-      Marker(
-        point: userPoint,
-        width: 32,
-        height: 32,
-        child: Tooltip(
-          message: isFil ? 'Iyong Lokasyon' : 'Your Location',
-          child: Container(
-            decoration: BoxDecoration(
-              color: const Color(0xFF2563EB).withAlpha(55),
-              shape: BoxShape.circle,
-            ),
-            alignment: Alignment.center,
-            child: Container(
-              width: 16,
-              height: 16,
-              decoration: BoxDecoration(
-                color: const Color(0xFF2563EB),
-                shape: BoxShape.circle,
-                border: Border.all(color: Colors.white, width: 2.5),
-              ),
-            ),
-          ),
-        ),
-      ),
-    ];
-
-    final showGuideLine = _selectedCenter != null &&
-        emergency.distanceToCenterKm(_selectedCenter!) <= 30.0;
+    final markers = _buildPriorityMarkers(
+      centers: centers,
+      userPoint: userPoint,
+      selectedCenter: _selectedCenter,
+      nearestOpenShelter: nearestOpen,
+      zoom: _currentZoom,
+      isFil: isFil,
+      onSelectCenter: (center) => _focusCenter(center),
+    );
 
     return Stack(
       children: [
@@ -1098,6 +1255,14 @@ class _EvacuationMapScreenState extends State<EvacuationMapScreen> {
             interactionOptions: const InteractionOptions(
               flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
             ),
+            onPositionChanged: (camera, _) {
+              final wasZoomed = _currentZoom >= 13.8;
+              final nowZoomed = camera.zoom >= 13.8;
+              _currentZoom = camera.zoom;
+              if (wasZoomed != nowZoomed && mounted) {
+                setState(() {});
+              }
+            },
             onTap: (_, __) {
               if (_selectedCenter != null) {
                 setState(() => _selectedCenter = null);
@@ -1105,10 +1270,7 @@ class _EvacuationMapScreenState extends State<EvacuationMapScreen> {
             },
           ),
           children: [
-            TileLayer(
-              urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-              userAgentPackageName: 'com.lifecheckpoint.app',
-            ),
+            _buildStyledTileLayer(isDark),
             if (showGuideLine)
               PolylineLayer(
                 polylines: [
@@ -1116,16 +1278,19 @@ class _EvacuationMapScreenState extends State<EvacuationMapScreen> {
                     points: [
                       userPoint,
                       LatLng(
-                        _selectedCenter!.latitude,
-                        _selectedCenter!.longitude,
+                        guideTarget.latitude,
+                        guideTarget.longitude,
                       ),
                     ],
-                    strokeWidth: 3.5,
-                    color: _selectedCenter!.isOpen
-                        ? Colors.teal.shade700
-                        : Colors.blueGrey.shade500,
+                    strokeWidth: isExplicitLine ? 3.5 : 2.6,
+                    color: (guideTarget.isOpen
+                            ? (isDark
+                                ? Colors.tealAccent.shade200
+                                : Colors.teal.shade700)
+                            : Colors.blueGrey.shade500)
+                        .withAlpha(isExplicitLine ? 235 : 175),
                     pattern: StrokePattern.dashed(
-                      segments: const [10, 7],
+                      segments: const [9, 7],
                       patternFit: PatternFit.scaleUp,
                     ),
                   ),
@@ -1140,11 +1305,17 @@ class _EvacuationMapScreenState extends State<EvacuationMapScreen> {
           top: 12,
           left: 12,
           child: Material(
-            color: (isDark ? AppTheme.darkCard : Colors.white).withAlpha(242),
-            elevation: 2,
-            borderRadius: BorderRadius.circular(10),
+            color: (isDark ? AppTheme.darkCard : Colors.white).withAlpha(244),
+            elevation: 2.5,
+            shadowColor: Colors.black.withAlpha(55),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(11),
+              side: BorderSide(
+                color: isDark ? AppTheme.darkBorder : AppTheme.lightBorder,
+              ),
+            ),
+            clipBehavior: Clip.antiAlias,
             child: InkWell(
-              borderRadius: BorderRadius.circular(10),
               onTap: () => _openFullScreenNearbyMap(
                 context,
                 emergency,
@@ -1155,8 +1326,8 @@ class _EvacuationMapScreenState extends State<EvacuationMapScreen> {
               ),
               child: Padding(
                 padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 7,
+                  horizontal: 11,
+                  vertical: 8,
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
@@ -1184,42 +1355,18 @@ class _EvacuationMapScreenState extends State<EvacuationMapScreen> {
           ),
         ),
 
-        // Top-right Map Controls (+, -, My Location, City of Manila)
+        // Top-right Grouped Map Controls (+ / - and GPS / City of Manila)
         Positioned(
           top: 12,
           right: 12,
-          child: Column(
-            children: [
-              _mapControlButton(
-                icon: Icons.add_rounded,
-                tooltip: 'Zoom In',
-                isDark: isDark,
-                onTap: () => _zoomBy(1.0),
-              ),
-              const SizedBox(height: 6),
-              _mapControlButton(
-                icon: Icons.remove_rounded,
-                tooltip: 'Zoom Out',
-                isDark: isDark,
-                onTap: () => _zoomBy(-1.0),
-              ),
-              const SizedBox(height: 6),
-              _mapControlButton(
-                icon: Icons.my_location_rounded,
-                tooltip: isFil ? 'Punta sa GPS Ko' : 'Center on Me',
-                isDark: isDark,
-                onTap: () => _safeMove(userPoint, 14.5),
-              ),
-              const SizedBox(height: 6),
-              _mapControlButton(
-                icon: Icons.location_city_rounded,
-                tooltip: isFil
-                    ? 'I-center sa Lungsod ng Maynila'
-                    : 'Center on City of Manila',
-                isDark: isDark,
-                onTap: () => _safeMove(_manilaCenter, 13.0),
-              ),
-            ],
+          child: _buildGroupedMapControls(
+            isDark: isDark,
+            isFil: isFil,
+            hasLiveGps: emergency.hasLiveGps,
+            onZoomIn: () => _zoomBy(1.0),
+            onZoomOut: () => _zoomBy(-1.0),
+            onCenterUser: () => _safeMove(userPoint, 14.5),
+            onCenterManila: () => _safeMove(_manilaCenter, 13.0),
           ),
         ),
 
@@ -1242,7 +1389,7 @@ class _EvacuationMapScreenState extends State<EvacuationMapScreen> {
                   ),
                   decoration: BoxDecoration(
                     color: (isDark ? AppTheme.darkCard : Colors.white)
-                        .withAlpha(235),
+                        .withAlpha(240),
                     borderRadius: BorderRadius.circular(10),
                     border: Border.all(
                       color:
@@ -1269,7 +1416,7 @@ class _EvacuationMapScreenState extends State<EvacuationMapScreen> {
                         isDark,
                       ),
                       _legendDot(
-                        isDark ? Colors.indigo.shade300 : Colors.indigo.shade600,
+                        isDark ? Colors.indigo.shade300 : Colors.indigo.shade700,
                         isFil ? 'Pulis/Bumbero' : 'Police/Fire',
                         isDark,
                       ),
@@ -1289,7 +1436,7 @@ class _EvacuationMapScreenState extends State<EvacuationMapScreen> {
                   ),
                   decoration: BoxDecoration(
                     color: (isDark ? AppTheme.darkCard : Colors.white)
-                        .withAlpha(220),
+                        .withAlpha(225),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Text(
@@ -1319,35 +1466,6 @@ class _EvacuationMapScreenState extends State<EvacuationMapScreen> {
             ),
           ),
       ],
-    );
-  }
-
-  Widget _mapControlButton({
-    required IconData icon,
-    required String tooltip,
-    required bool isDark,
-    required VoidCallback onTap,
-  }) {
-    return Material(
-      color: (isDark ? AppTheme.darkCard : Colors.white).withAlpha(240),
-      elevation: 2,
-      borderRadius: BorderRadius.circular(10),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(10),
-        child: Tooltip(
-          message: tooltip,
-          child: SizedBox(
-            width: 38,
-            height: 38,
-            child: Icon(
-              icon,
-              size: 20,
-              color: isDark ? Colors.white : AppTheme.darkSlate,
-            ),
-          ),
-        ),
-      ),
     );
   }
 
