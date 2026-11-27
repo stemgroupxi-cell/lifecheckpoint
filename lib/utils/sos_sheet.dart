@@ -18,6 +18,10 @@ class SosSheet {
     final isFil = context.read<SettingsProvider>().isFilipino;
     final s = AppStrings(isFil);
 
+    if (!emergency.hasLiveGps && !emergency.isLocating) {
+      emergency.detectLiveGps();
+    }
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -25,7 +29,24 @@ class SosSheet {
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (ctx) {
-        return SafeArea(
+        return Consumer<EmergencyProvider>(
+          builder: (ctx, em, _) {
+            final hasPersonal = em.personalContacts.isNotEmpty;
+            final smsRecipient = hasPersonal
+                ? em.personalContacts.first.phoneNumber
+                : '0932-662-2322';
+            final smsTargetLabel = hasPersonal
+                ? '${em.personalContacts.first.name} ($smsRecipient)'
+                : 'Manila DRRMO Mobile ($smsRecipient)';
+            final gpsCaption = em.hasLiveGps
+                ? 'Live GPS: ${em.userLat.toStringAsFixed(5)}, ${em.userLng.toStringAsFixed(5)}'
+                : (em.isLocating
+                    ? (isFil
+                        ? 'Kinukuha ang live GPS... (${em.userLat.toStringAsFixed(4)}, ${em.userLng.toStringAsFixed(4)})'
+                        : 'Detecting live GPS... (${em.userLat.toStringAsFixed(4)}, ${em.userLng.toStringAsFixed(4)})')
+                    : '${isFil ? 'Default Maynila' : 'Manila Ref'}: ${em.userLat.toStringAsFixed(4)}, ${em.userLng.toStringAsFixed(4)}');
+
+            return SafeArea(
           child: SingleChildScrollView(
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
             child: Column(
@@ -95,18 +116,23 @@ class SosSheet {
                         isFil
                             ? 'SOS: Nangangailangan ng agarang tulong sa lokasyong ito.'
                             : 'SOS: Urgent assistance requested from Emergency SOS button.',
-                        latitude: emergency.userLat,
-                        longitude: emergency.userLng,
+                        latitude: em.userLat,
+                        longitude: em.userLng,
                         authorName: auth.fullName ?? 'Household Member',
                       );
                       if (context.mounted) {
+                        final signedIn = auth.isAuthenticated;
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(
                             backgroundColor: AppTheme.dangerRed,
                             content: Text(
-                              isFil
-                                  ? 'Naipadala ang SOS alert sa pamilya at DRRM (naka-queue kung offline).'
-                                  : 'SOS alert logged for your family & DRRM (auto-syncs when online).',
+                              signedIn
+                                  ? (isFil
+                                      ? 'Naipadala ang SOS alert sa pamilya at DRRM (naka-queue kung offline).'
+                                      : 'SOS alert sent to your family & DRRM (auto-syncs when online).')
+                                  : (isFil
+                                      ? 'Nai-save ang SOS alert sa device na ito. Mag-sign in para mai-sync sa pamilya at DRRM.'
+                                      : 'SOS alert saved on this device. Sign in under Family Backup to sync with family & DRRM.'),
                             ),
                           ),
                         );
@@ -141,7 +167,7 @@ class SosSheet {
                     Navigator.pop(ctx);
                     ActionFeedback.callWithFeedback(
                       context,
-                      emergency,
+                      em,
                       '911',
                       'National Emergency 911',
                     );
@@ -175,7 +201,7 @@ class SosSheet {
                     Navigator.pop(ctx);
                     ActionFeedback.callWithFeedback(
                       context,
-                      emergency,
+                      em,
                       '143',
                       'Philippine Red Cross',
                     );
@@ -210,7 +236,7 @@ class SosSheet {
                     Navigator.pop(ctx);
                     ActionFeedback.callWithFeedback(
                       context,
-                      emergency,
+                      em,
                       '(02) 8568-6909',
                       'Manila DRRMO',
                     );
@@ -234,18 +260,16 @@ class SosSheet {
                       fontSize: 15,
                     ),
                   ),
-                  subtitle: Text(
-                    '${emergency.userLat.toStringAsFixed(4)}, ${emergency.userLng.toStringAsFixed(4)}',
-                  ),
+                  subtitle: Text(gpsCaption),
                   trailing: const Icon(
                     Icons.copy_rounded,
                     color: AppTheme.primaryAccent,
                   ),
                   onTap: () async {
                     Navigator.pop(ctx);
-                    final lat = emergency.userLat.toStringAsFixed(5);
-                    final lng = emergency.userLng.toStringAsFixed(5);
-                    final hh = emergency.emergencyPlan.householdName;
+                    final lat = em.userLat.toStringAsFixed(5);
+                    final lng = em.userLng.toStringAsFixed(5);
+                    final hh = em.emergencyPlan.householdName;
                     final msg =
                         'EMERGENCY ($hh): Need urgent help! My location: https://maps.google.com/?q=$lat,$lng (GPS: $lat, $lng)';
                     await Clipboard.setData(ClipboardData(text: msg));
@@ -280,20 +304,19 @@ class SosSheet {
                   ),
                   subtitle: Text(
                     isFil
-                        ? 'Kasama ang GPS coordinates at pangalan ng pamilya'
-                        : 'Includes GPS coordinates & household name',
+                        ? 'Padadalhan: $smsTargetLabel • Kasama ang GPS'
+                        : 'To: $smsTargetLabel • Includes GPS link',
                   ),
                   trailing: const Icon(Icons.send, color: AppTheme.safeGreen),
                   onTap: () {
                     Navigator.pop(ctx);
-                    final firstContact = emergency.personalContacts.isNotEmpty
-                        ? emergency.personalContacts.first.phoneNumber
-                        : '911';
+                    final lat = em.userLat.toStringAsFixed(5);
+                    final lng = em.userLng.toStringAsFixed(5);
                     ActionFeedback.smsWithFeedback(
                       context,
-                      emergency,
-                      firstContact,
-                      'EMERGENCY (${emergency.emergencyPlan.householdName}): Need urgent assistance! GPS: ${emergency.userLat.toStringAsFixed(4)}, ${emergency.userLng.toStringAsFixed(4)}',
+                      em,
+                      smsRecipient,
+                      'EMERGENCY (${em.emergencyPlan.householdName}): Need urgent assistance in Manila! Map: https://maps.google.com/?q=$lat,$lng (GPS: $lat, $lng)',
                     );
                   },
                 ),
@@ -338,6 +361,8 @@ class SosSheet {
               ],
             ),
           ),
+        );
+          },
         );
       },
     );

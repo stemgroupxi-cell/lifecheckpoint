@@ -140,6 +140,9 @@
         var AudioCtx = window.AudioContext || window.webkitAudioContext;
         if (!AudioCtx) return false;
         var ctx = new AudioCtx();
+        if (ctx.state === 'suspended' && ctx.resume) {
+          ctx.resume().catch(function () {});
+        }
         var osc1 = ctx.createOscillator();
         var osc2 = ctx.createOscillator();
         var gain = ctx.createGain();

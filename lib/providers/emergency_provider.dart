@@ -480,13 +480,9 @@ class EmergencyProvider extends ChangeNotifier {
     required String message,
   }) async {
     final cleanNumber = phoneNumber.replaceAll(RegExp(r'[^0-9+]'), '');
-    final Uri smsUri = Uri(
-      scheme: 'sms',
-      path: cleanNumber,
-      queryParameters: <String, String>{
-        'body': message,
-      },
-    );
+    // Use %20 encoding (not '+') so Android/iOS SMS apps render clean spaces
+    final encodedBody = Uri.encodeComponent(message);
+    final Uri smsUri = Uri.parse('sms:$cleanNumber?body=$encodedBody');
     try {
       if (await canLaunchUrl(smsUri)) {
         return await launchUrl(smsUri);
