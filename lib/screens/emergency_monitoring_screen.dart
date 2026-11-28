@@ -234,7 +234,7 @@ class EmergencyMonitoringScreen extends StatelessWidget {
               ),
               const SizedBox(height: 12),
 
-              // 2. Official Manila DRRMO Advisories (Always visible status strip or live banners)
+              // 2. Official Manila DRRMO Advisories + Live Alert Notification Control
               if (mon.advisories.isNotEmpty) ...[
                 DrrmAdvisoryBannerList(
                   advisories: mon.advisories,
@@ -242,7 +242,7 @@ class EmergencyMonitoringScreen extends StatelessWidget {
                   isFil: isFil,
                   maxItems: 5,
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(height: 6),
               ] else ...[
                 Container(
                   padding: const EdgeInsets.symmetric(
@@ -287,8 +287,8 @@ class EmergencyMonitoringScreen extends StatelessWidget {
                             ),
                             Text(
                               isFil
-                                  ? 'Aktibo ang monitoring • Walang kasalukuyang babala sa Maynila.'
-                                  : 'Live channel active • No active Manila advisories right now.',
+                                  ? 'Live auto-check (30s) • Walang kasalukuyang babala sa Maynila.'
+                                  : 'Live auto-check (30s) • No active Manila advisories right now.',
                               style: TextStyle(fontSize: 12.5, color: subtleText),
                             ),
                           ],
@@ -297,8 +297,133 @@ class EmergencyMonitoringScreen extends StatelessWidget {
                     ],
                   ),
                 ),
-                const SizedBox(height: 14),
+                const SizedBox(height: 8),
               ],
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                decoration: BoxDecoration(
+                  color: mon.liveAlertsEnabled
+                      ? AppTheme.safeGreen.withAlpha(isDark ? 36 : 16)
+                      : (isDark ? AppTheme.darkCard : Colors.white),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: mon.liveAlertsEnabled
+                        ? AppTheme.safeGreen.withAlpha(110)
+                        : (isDark ? AppTheme.darkBorder : AppTheme.lightBorder),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      mon.liveAlertsEnabled
+                          ? Icons.notifications_active_rounded
+                          : Icons.notifications_none_rounded,
+                      size: 19,
+                      color: mon.liveAlertsEnabled
+                          ? AppTheme.safeGreen
+                          : accentNavy,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            mon.liveAlertsEnabled
+                                ? (isFil
+                                    ? 'Live Browser Alerts: AKTIBO'
+                                    : 'Live Browser Alerts: ON')
+                                : (isFil
+                                    ? 'Live DRRM Alert Notifications'
+                                    : 'Live DRRM Alert Notifications'),
+                            style: TextStyle(
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w800,
+                              color: headingColor,
+                            ),
+                          ),
+                          Text(
+                            mon.liveAlertsEnabled
+                                ? (isFil
+                                    ? 'Kusang magpapaalala at tutunog kapag may bagong abiso (30s).'
+                                    : 'Auto-notifies with alert chime when Manila DRRMO posts (30s).')
+                                : (mon.browserNotificationsSupported
+                                    ? (isFil
+                                        ? 'I-on para makatanggap agad ng alert popup kahit nasa ibang tab.'
+                                        : 'Enable instant browser popups when a new Manila advisory arrives.')
+                                    : (isFil
+                                        ? 'Aktibo ang in-app live alerts kada 30 segundo habang bukas ang app.'
+                                        : 'In-app live alerts active every 30s while the app is open.')),
+                            style: TextStyle(fontSize: 11.5, color: subtleText),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (mon.browserNotificationsSupported) ...[
+                      const SizedBox(width: 8),
+                      mon.liveAlertsEnabled
+                          ? OutlinedButton(
+                              style: OutlinedButton.styleFrom(
+                                minimumSize: const Size(0, 34),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                ),
+                              ),
+                              onPressed: () => mon.disableLiveBrowserAlerts(),
+                              child: Text(
+                                isFil ? 'I-off' : 'Mute',
+                                style: const TextStyle(fontSize: 12),
+                              ),
+                            )
+                          : FilledButton.tonal(
+                              style: FilledButton.styleFrom(
+                                minimumSize: const Size(0, 34),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                ),
+                              ),
+                              onPressed: () async {
+                                final perm = await mon.enableLiveBrowserAlerts(
+                                  isFil: isFil,
+                                );
+                                if (!context.mounted) return;
+                                if (perm == 'granted') {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      backgroundColor: AppTheme.safeGreen,
+                                      content: Text(
+                                        isFil
+                                            ? 'Aktibo na ang Live DRRM Browser Alerts!'
+                                            : 'Live DRRM Browser Alerts enabled!',
+                                      ),
+                                    ),
+                                  );
+                                } else if (perm == 'denied') {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      backgroundColor: AppTheme.warningAmber,
+                                      content: Text(
+                                        isFil
+                                            ? 'Naka-block ang notifications sa browser settings. Aktibo pa rin ang in-app alerts.'
+                                            : 'Notifications are blocked in browser settings. In-app alerts remain active.',
+                                      ),
+                                    ),
+                                  );
+                                }
+                              },
+                              child: Text(
+                                isFil ? 'I-on' : 'Enable',
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(height: 14),
 
               // 3. 1-Tap Family Safety Check-In Card
               Card(

@@ -112,7 +112,53 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       monitoring.advisoriesFetcher = auth.fetchPublicAdvisories;
       monitoring.onCheckinAdded =
           (checkin) => auth.enqueueMutation('add_checkin', checkin);
+      monitoring.onNewAdvisoryReceived = (advisory) {
+        if (!mounted) return;
+        final currentAuth = context.read<AuthProvider>();
+        if (currentAuth.isAdmin) return;
+        final isFil = context.read<SettingsProvider>().isFilipino;
+        final isCritical = advisory.severity == 'critical';
+        final isWarning = advisory.severity == 'warning';
+        final prefix = isCritical
+            ? (isFil ? 'KRITIKAL (Manila DRRMO)' : 'CRITICAL — Manila DRRMO')
+            : (isWarning
+                ? (isFil ? 'BABALA (Manila DRRMO)' : 'WARNING — Manila DRRMO')
+                : (isFil ? 'ABISO (Manila DRRMO)' : 'Manila DRRMO Advisory'));
+
+        if (monitoring.liveAlertsEnabled) {
+          showBrowserNotification(
+            title: '$prefix: ${advisory.title}',
+            body: '${advisory.area} — ${advisory.message}',
+            tag: 'advisory-${advisory.id}',
+          );
+          playAlertChime(isCritical: isCritical);
+        }
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            duration: const Duration(seconds: 7),
+            backgroundColor: isCritical
+                ? AppTheme.dangerRed
+                : (isWarning ? AppTheme.warningAmber : AppTheme.primaryNavy),
+            content: Text(
+              '$prefix: ${advisory.title}',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+            action: SnackBarAction(
+              label: isFil ? 'Tingnan' : 'View',
+              textColor: Colors.white,
+              onPressed: () => _onNavigateTab(2),
+            ),
+          ),
+        );
+      };
       monitoring.refreshAdvisoriesOnly();
+      monitoring.startAdvisoryPolling(
+        shouldPoll: () =>
+            mounted && _isOnline && !context.read<AuthProvider>().isAdmin,
+      );
 
       auth.attachSyncHandlers(
         kitPayloadReader: kit.exportSyncPayload,

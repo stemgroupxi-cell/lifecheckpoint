@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../utils/location_service.dart';
+import '../utils/pwa_bridge.dart';
 
 class SeismicEvent {
   final String id;
@@ -155,6 +157,8 @@ class DrrmAdvisory {
 class MonitoringProvider extends ChangeNotifier {
   static const String _cacheKey = 'lifecheckpoint_monitoring_cache_v1';
   static const String _checkInLogKey = 'lifecheckpoint_safety_log_v1';
+  static const String _seenAdvisoriesKey = 'lifecheckpoint_seen_advisories_v1';
+  static const String _liveAlertsEnabledKey = 'lifecheckpoint_live_alerts_v1';
 
   bool _isRefreshing = false;
   bool _isOfflineMode = false;
@@ -166,10 +170,17 @@ class MonitoringProvider extends ChangeNotifier {
   double _lastLat = 14.5822;
   double _lastLng = 120.9882;
 
+  final Set<String> _knownAdvisoryIds = <String>{};
+  bool _hasAdvisoryBaseline = false;
+  bool _alertsEnabled = false;
+  bool _isPollingAdvisories = false;
+  Timer? _advisoryPollTimer;
+
   Future<Map<String, dynamic>?> Function(double lat, double lng)?
       telemetryProxyFetcher;
   Future<List<Map<String, dynamic>>> Function()? advisoriesFetcher;
   void Function(Map<String, dynamic> checkin)? onCheckinAdded;
+  void Function(DrrmAdvisory advisory)? onNewAdvisoryReceived;
 
   MonitoringProvider() {
     _loadCachedData();
@@ -182,6 +193,64 @@ class MonitoringProvider extends ChangeNotifier {
   List<SeismicEvent> get earthquakes => List.unmodifiable(_earthquakes);
   List<DrrmAdvisory> get advisories => List.unmodifiable(_advisories);
   List<Map<String, String>> get safetyLog => List.unmodifiable(_safetyLog);
+
+  bool get browserNotificationsSupported =>
+      getBrowserNotificationPermission() != 'unsupported';
+  bool get browserNotificationsGranted =>
+      getBrowserNotificationPermission() == 'granted';
+  bool get liveAlertsEnabled => _alertsEnabled && browserNotificationsGranted;
+
+  Future<String> enableLiveBrowserAlerts({bool isFil = false}) async {
+    final perm = await requestBrowserNotificationPermission();
+    if (perm == 'granted') {
+      _alertsEnabled = true;
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setBool(_liveAlertsEnabledKey, true);
+      } catch (_) {}
+      notifyListeners();
+      showBrowserNotification(
+        title: isFil
+            ? 'Aktibo na ang LifeCheckpoint Live Alerts'
+            : 'LifeCheckpoint Live Alerts Enabled',
+        body: isFil
+            ? 'Aabisuhan ka agad tuwing may bagong opisyal na abiso mula sa Manila DRRMO.'
+            : 'You will be alerted automatically whenever Manila DRRMO publishes a new advisory.',
+        tag: 'lifecheckpoint-alerts-enabled',
+      );
+      playAlertChime(isCritical: false);
+    }
+    return perm;
+  }
+
+  Future<void> disableLiveBrowserAlerts() async {
+    _alertsEnabled = false;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_liveAlertsEnabledKey, false);
+    } catch (_) {}
+    notifyListeners();
+  }
+
+  void startAdvisoryPolling({bool Function()? shouldPoll}) {
+    _advisoryPollTimer?.cancel();
+    _advisoryPollTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (_isPollingAdvisories) return;
+      if (shouldPoll != null && !shouldPoll()) return;
+      refreshAdvisoriesOnly(notify: true, detectNew: true);
+    });
+  }
+
+  void stopAdvisoryPolling() {
+    _advisoryPollTimer?.cancel();
+    _advisoryPollTimer = null;
+  }
+
+  @override
+  void dispose() {
+    stopAdvisoryPolling();
+    super.dispose();
+  }
 
   bool _hasSignificantManilaQuake() {
     return _earthquakes.any((q) {
@@ -289,6 +358,12 @@ class MonitoringProvider extends ChangeNotifier {
         final decoded = json.decode(logStr) as List<dynamic>;
         _safetyLog = decoded.map((e) => Map<String, String>.from(e)).toList();
       }
+
+      final seenList = prefs.getStringList(_seenAdvisoriesKey);
+      if (seenList != null) {
+        _knownAdvisoryIds.addAll(seenList);
+      }
+      _alertsEnabled = prefs.getBool(_liveAlertsEnabledKey) ?? false;
     } catch (e) {
       debugPrint('Failed loading monitoring cache: $e');
     }
@@ -453,14 +528,59 @@ class MonitoringProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> refreshAdvisoriesOnly({bool notify = true}) async {
-    if (advisoriesFetcher == null) return;
+  Future<void> refreshAdvisoriesOnly({
+    bool notify = true,
+    bool detectNew = false,
+  }) async {
+    if (advisoriesFetcher == null || _isPollingAdvisories) return;
+    _isPollingAdvisories = true;
     try {
       final raw = await advisoriesFetcher!();
-      _advisories = raw.map(DrrmAdvisory.fromMap).toList();
-      await _saveCache();
+      final nextAdvisories = raw.map(DrrmAdvisory.fromMap).toList();
+      final newlyArrived = <DrrmAdvisory>[];
+
+      if (!_hasAdvisoryBaseline) {
+        for (final adv in nextAdvisories) {
+          if (adv.id.isNotEmpty) _knownAdvisoryIds.add(adv.id);
+        }
+        _hasAdvisoryBaseline = true;
+      } else if (detectNew) {
+        for (final adv in nextAdvisories) {
+          if (adv.id.isNotEmpty && !_knownAdvisoryIds.contains(adv.id)) {
+            _knownAdvisoryIds.add(adv.id);
+            newlyArrived.add(adv);
+          }
+        }
+      } else {
+        for (final adv in nextAdvisories) {
+          if (adv.id.isNotEmpty) _knownAdvisoryIds.add(adv.id);
+        }
+      }
+
+      final prevKey = _advisories.map((a) => '${a.id}:${a.severity}:${a.title}').join('|');
+      final nextKey = nextAdvisories.map((a) => '${a.id}:${a.severity}:${a.title}').join('|');
+      _advisories = nextAdvisories;
+
+      if (prevKey != nextKey || newlyArrived.isNotEmpty) {
+        await _saveCache();
+        try {
+          final prefs = await SharedPreferences.getInstance();
+          final trimmed = _knownAdvisoryIds.length > 60
+              ? _knownAdvisoryIds.toList().sublist(_knownAdvisoryIds.length - 60)
+              : _knownAdvisoryIds.toList();
+          await prefs.setStringList(_seenAdvisoriesKey, trimmed);
+        } catch (_) {}
+      }
+
       if (notify) notifyListeners();
-    } catch (_) {}
+
+      for (final adv in newlyArrived) {
+        onNewAdvisoryReceived?.call(adv);
+      }
+    } catch (_) {
+    } finally {
+      _isPollingAdvisories = false;
+    }
   }
 
   Future<void> _saveCache() async {

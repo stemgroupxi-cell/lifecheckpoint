@@ -193,6 +193,98 @@
       } catch (e) {}
     };
 
+    // Browser Notification API & subtle DRRM advisory chime
+    window.__lcNotificationPermission = function () {
+      try {
+        if (typeof window === 'undefined' || !('Notification' in window)) {
+          return 'unsupported';
+        }
+        return window.Notification.permission || 'default';
+      } catch (e) {
+        return 'unsupported';
+      }
+    };
+
+    window.__lcRequestNotificationPermission = async function () {
+      try {
+        if (typeof window === 'undefined' || !('Notification' in window)) {
+          return 'unsupported';
+        }
+        if (window.Notification.permission === 'granted') return 'granted';
+        var result = await window.Notification.requestPermission();
+        return result || 'default';
+      } catch (e) {
+        return 'unsupported';
+      }
+    };
+
+    window.__lcShowBrowserNotification = function (title, body, tag) {
+      try {
+        if (
+          typeof window === 'undefined' ||
+          !('Notification' in window) ||
+          window.Notification.permission !== 'granted'
+        ) {
+          return false;
+        }
+        var opts = {
+          body: body || '',
+          icon: './icons/Icon-192.png',
+          badge: './icons/Icon-192.png',
+          tag: tag || 'lifecheckpoint-advisory',
+          renotify: true,
+        };
+        if ('serviceWorker' in navigator && navigator.serviceWorker.ready) {
+          navigator.serviceWorker.ready
+            .then(function (reg) {
+              if (reg && reg.showNotification) {
+                return reg.showNotification(title, opts);
+              }
+              new window.Notification(title, opts);
+            })
+            .catch(function () {
+              try {
+                new window.Notification(title, opts);
+              } catch (_) {}
+            });
+        } else {
+          new window.Notification(title, opts);
+        }
+        return true;
+      } catch (e) {
+        return false;
+      }
+    };
+
+    window.__lcPlayAlertChime = function (isCritical) {
+      try {
+        var AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (!AudioCtx) return;
+        var ctx = new AudioCtx();
+        if (ctx.state === 'suspended' && ctx.resume) {
+          ctx.resume().catch(function () {});
+        }
+        var notes = isCritical ? [988, 1318, 988] : [880, 1175];
+        notes.forEach(function (freq, idx) {
+          var osc = ctx.createOscillator();
+          var gain = ctx.createGain();
+          var start = ctx.currentTime + idx * 0.16;
+          osc.type = 'sine';
+          osc.frequency.value = freq;
+          gain.gain.setValueAtTime(0.001, start);
+          gain.gain.exponentialRampToValueAtTime(0.16, start + 0.02);
+          gain.gain.exponentialRampToValueAtTime(0.001, start + 0.14);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start(start);
+          osc.stop(start + 0.15);
+        });
+        setTimeout(function () {
+          try { ctx.close(); } catch (_) {}
+        }, 700);
+      } catch (e) {}
+    };
+
     window.addEventListener('flutter-first-frame', function () {
       var splash = document.getElementById('lc-splash');
       if (splash) {

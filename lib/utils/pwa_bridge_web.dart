@@ -22,6 +22,18 @@ external void _jsStopWhistle();
 @JS('__lcSetThemeColor')
 external void _jsSetThemeColor(bool isDark);
 
+@JS('__lcNotificationPermission')
+external String _jsNotificationPermission();
+
+@JS('__lcRequestNotificationPermission')
+external JSPromise<JSString> _jsRequestNotificationPermission();
+
+@JS('__lcShowBrowserNotification')
+external bool _jsShowBrowserNotification(String title, String body, String tag);
+
+@JS('__lcPlayAlertChime')
+external void _jsPlayAlertChime(bool isCritical);
+
 bool isDeviceOnline() {
   try {
     return web.window.navigator.onLine;
@@ -95,5 +107,40 @@ void stopEmergencyWhistle() {
 void syncBrowserThemeColor(bool isDark) {
   try {
     _jsSetThemeColor(isDark);
+  } catch (_) {}
+}
+
+String getBrowserNotificationPermission() {
+  try {
+    return _jsNotificationPermission();
+  } catch (_) {
+    return 'unsupported';
+  }
+}
+
+Future<String> requestBrowserNotificationPermission() async {
+  try {
+    final res = await _jsRequestNotificationPermission().toDart;
+    return res.toDart;
+  } catch (_) {
+    return 'unsupported';
+  }
+}
+
+bool showBrowserNotification({
+  required String title,
+  required String body,
+  String tag = 'lifecheckpoint-advisory',
+}) {
+  try {
+    return _jsShowBrowserNotification(title, body, tag);
+  } catch (_) {
+    return false;
+  }
+}
+
+void playAlertChime({bool isCritical = false}) {
+  try {
+    _jsPlayAlertChime(isCritical);
   } catch (_) {}
 }
