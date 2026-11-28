@@ -30,3 +30,12 @@ bool showBrowserNotification({
     false;
 
 void playAlertChime({bool isCritical = false}) {}
+
+bool get supportsOfflineMapDownload => false;
+
+Future<int> getCachedMapTileCount() async => 0;
+
+Future<int> downloadManilaOfflineMap({
+  void Function(int done, int total)? onProgress,
+}) async =>
+    0;

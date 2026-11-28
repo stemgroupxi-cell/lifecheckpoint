@@ -1,6 +1,6 @@
 // LifeCheckpoint True Offline-First Service Worker
 // Network-First (with fast fallback) for App Shell; Cache-First for CanvasKit, Fonts, Assets & Map Tiles
-const CACHE_NAME = 'lifecheckpoint-pwa-v40';
+const CACHE_NAME = 'lifecheckpoint-pwa-v41';
 const RUNTIME_CACHE_NAME = 'lifecheckpoint-runtime-v1';
 const TILE_CACHE_NAME = 'lifecheckpoint-map-tiles-v1';
 
@@ -83,7 +83,7 @@ self.addEventListener('fetch', (event) => {
   if (url.hostname.endsWith('tile.openstreetmap.org')) {
     event.respondWith(
       caches.open(TILE_CACHE_NAME).then(async (cache) => {
-        const cached = await cache.match(req);
+        const cached = (await cache.match(req)) || (await cache.match(req.url));
         if (cached) return cached;
         try {
           const response = await fetch(req);

@@ -34,6 +34,12 @@ external bool _jsShowBrowserNotification(String title, String body, String tag);
 @JS('__lcPlayAlertChime')
 external void _jsPlayAlertChime(bool isCritical);
 
+@JS('__lcCountCachedMapTiles')
+external JSPromise<JSNumber> _jsCountCachedMapTiles();
+
+@JS('__lcCacheManilaMapTiles')
+external JSPromise<JSNumber> _jsCacheManilaMapTiles(JSFunction? onProgress);
+
 bool isDeviceOnline() {
   try {
     return web.window.navigator.onLine;
@@ -143,4 +149,31 @@ void playAlertChime({bool isCritical = false}) {
   try {
     _jsPlayAlertChime(isCritical);
   } catch (_) {}
+}
+
+bool get supportsOfflineMapDownload => true;
+
+Future<int> getCachedMapTileCount() async {
+  try {
+    final res = await _jsCountCachedMapTiles().toDart;
+    return res.toDartInt;
+  } catch (_) {
+    return 0;
+  }
+}
+
+Future<int> downloadManilaOfflineMap({
+  void Function(int done, int total)? onProgress,
+}) async {
+  try {
+    final jsCb = onProgress != null
+        ? ((JSNumber done, JSNumber total) {
+            onProgress(done.toDartInt, total.toDartInt);
+          }).toJS
+        : null;
+    final res = await _jsCacheManilaMapTiles(jsCb).toDart;
+    return res.toDartInt;
+  } catch (_) {
+    return 0;
+  }
 }

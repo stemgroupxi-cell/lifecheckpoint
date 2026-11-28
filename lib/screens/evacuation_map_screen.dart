@@ -11,6 +11,8 @@ import '../providers/settings_provider.dart';
 import '../utils/action_feedback.dart';
 import '../utils/app_theme.dart';
 import '../utils/location_service.dart';
+import '../utils/manila_route_service.dart';
+import '../utils/pwa_bridge.dart';
 import '../widgets/manila_map_picker.dart';
 import '../widgets/responsive_container.dart';
 
@@ -32,6 +34,141 @@ class _EvacuationMapScreenState extends State<EvacuationMapScreen> {
   EvacuationCenter? _selectedCenter;
   bool _isPanningMobileMap = false;
   double _currentZoom = 13.0;
+
+  EvacuationRouteResult? _activeStreetRoute;
+  String? _activeRouteKey;
+  bool _isDownloadingMap = false;
+  int _mapDownloadDone = 0;
+  int _mapDownloadTotal = 0;
+  int _cachedTileCount = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _refreshCachedTileCount();
+  }
+
+  Future<void> _refreshCachedTileCount() async {
+    if (!supportsOfflineMapDownload) return;
+    final count = await getCachedMapTileCount();
+    if (mounted) {
+      setState(() => _cachedTileCount = count);
+    }
+  }
+
+  Future<void> _handleDownloadOfflineMap(
+    BuildContext context,
+    bool isFil,
+  ) async {
+    if (_isDownloadingMap) return;
+    setState(() {
+      _isDownloadingMap = true;
+      _mapDownloadDone = 0;
+      _mapDownloadTotal = 53;
+    });
+    final cached = await downloadManilaOfflineMap(
+      onProgress: (done, total) {
+        if (!mounted) return;
+        setState(() {
+          _mapDownloadDone = done;
+          _mapDownloadTotal = total;
+        });
+      },
+    );
+    if (!mounted) return;
+    final count = await getCachedMapTileCount();
+    if (!mounted) return;
+    setState(() {
+      _isDownloadingMap = false;
+      _cachedTileCount = count > cached ? count : cached;
+    });
+    if (context.mounted) {
+      final ok = _cachedTileCount >= 20;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: ok ? AppTheme.safeGreen : AppTheme.warningAmber,
+          content: Text(
+            ok
+                ? (isFil
+                    ? 'Handa na offline ang mapa ng Lungsod ng Maynila ($_cachedTileCount tiles)!'
+                    : 'City of Manila offline map ready ($_cachedTileCount tiles cached)!')
+                : (isFil
+                    ? 'Hindi ma-download ang mapa ngayon. Suriin ang iyong internet connection.'
+                    : 'Could not cache map tiles right now. Check your internet connection.'),
+          ),
+        ),
+      );
+    }
+  }
+
+  void _ensureStreetRoute(LatLng userPoint, EvacuationCenter target) {
+    final dest = LatLng(target.latitude, target.longitude);
+    final key = ManilaRouteService.buildCacheKey(userPoint, dest);
+    if (_activeRouteKey == key) return;
+    _activeRouteKey = key;
+    if (_activeStreetRoute != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _activeRouteKey == key) {
+          setState(() => _activeStreetRoute = null);
+        }
+      });
+    }
+    ManilaRouteService.getStreetRoute(from: userPoint, to: dest).then((res) {
+      if (!mounted || _activeRouteKey != key) return;
+      if (res != null) {
+        setState(() => _activeStreetRoute = res);
+      }
+    });
+  }
+
+  PolylineLayer _buildRoutePolylineLayer({
+    required LatLng userPoint,
+    required EvacuationCenter target,
+    required EvacuationRouteResult? streetRoute,
+    required bool isExplicitLine,
+    required bool isDark,
+  }) {
+    final mainColor = target.isOpen
+        ? (isDark ? Colors.tealAccent.shade200 : Colors.teal.shade700)
+        : Colors.blueGrey.shade500;
+
+    if (streetRoute != null &&
+        streetRoute.isStreetRoute &&
+        streetRoute.points.length >= 2) {
+      return PolylineLayer(
+        polylines: [
+          Polyline(
+            points: streetRoute.points,
+            strokeWidth: isExplicitLine ? 7.2 : 5.8,
+            color: (isDark ? const Color(0xFF0F172A) : Colors.white)
+                .withAlpha(isExplicitLine ? 235 : 200),
+          ),
+          Polyline(
+            points: streetRoute.points,
+            strokeWidth: isExplicitLine ? 4.4 : 3.4,
+            color: mainColor.withAlpha(isExplicitLine ? 245 : 205),
+          ),
+        ],
+      );
+    }
+
+    return PolylineLayer(
+      polylines: [
+        Polyline(
+          points: [
+            userPoint,
+            LatLng(target.latitude, target.longitude),
+          ],
+          strokeWidth: isExplicitLine ? 3.5 : 2.6,
+          color: mainColor.withAlpha(isExplicitLine ? 235 : 175),
+          pattern: StrokePattern.dashed(
+            segments: const [9, 7],
+            patternFit: PatternFit.scaleUp,
+          ),
+        ),
+      ],
+    );
+  }
 
   @override
   void dispose() {
@@ -1006,6 +1143,8 @@ class _EvacuationMapScreenState extends State<EvacuationMapScreen> {
 
     EvacuationCenter? activeSelected = _selectedCenter;
     double fullZoom = startZoom;
+    EvacuationRouteResult? fullStreetRoute = _activeStreetRoute;
+    String? fullRouteKey = _activeRouteKey;
 
     final pickedBack = await Navigator.of(context).push<EvacuationCenter?>(
       MaterialPageRoute(
@@ -1018,6 +1157,21 @@ class _EvacuationMapScreenState extends State<EvacuationMapScreen> {
                 emergency.distanceToCenterKm(guideTarget) <= 30.0;
             final isExplicitLine = activeSelected != null;
             final hasStandby = centers.any((c) => !c.isOpen);
+
+            if (showLine) {
+              final dest = LatLng(guideTarget.latitude, guideTarget.longitude);
+              final nextKey = ManilaRouteService.buildCacheKey(userPoint, dest);
+              if (fullRouteKey != nextKey) {
+                fullRouteKey = nextKey;
+                fullStreetRoute = null;
+                ManilaRouteService.getStreetRoute(from: userPoint, to: dest)
+                    .then((res) {
+                  if (ctx.mounted && fullRouteKey == nextKey && res != null) {
+                    setFullState(() => fullStreetRoute = res);
+                  }
+                });
+              }
+            }
 
             void moveFull(LatLng target, double zoom) {
               try {
@@ -1069,29 +1223,12 @@ class _EvacuationMapScreenState extends State<EvacuationMapScreen> {
                     children: [
                       _buildStyledTileLayer(isDark),
                       if (showLine)
-                        PolylineLayer(
-                          polylines: [
-                            Polyline(
-                              points: [
-                                userPoint,
-                                LatLng(
-                                  guideTarget.latitude,
-                                  guideTarget.longitude,
-                                ),
-                              ],
-                              strokeWidth: isExplicitLine ? 3.5 : 2.6,
-                              color: (guideTarget.isOpen
-                                      ? (isDark
-                                          ? Colors.tealAccent.shade200
-                                          : Colors.teal.shade700)
-                                      : Colors.blueGrey.shade500)
-                                  .withAlpha(isExplicitLine ? 235 : 175),
-                              pattern: StrokePattern.dashed(
-                                segments: const [9, 7],
-                                patternFit: PatternFit.scaleUp,
-                              ),
-                            ),
-                          ],
+                        _buildRoutePolylineLayer(
+                          userPoint: userPoint,
+                          target: guideTarget,
+                          streetRoute: fullStreetRoute,
+                          isExplicitLine: isExplicitLine,
+                          isDark: isDark,
                         ),
                       MarkerLayer(
                         markers: _buildPriorityMarkers(
@@ -1197,6 +1334,7 @@ class _EvacuationMapScreenState extends State<EvacuationMapScreen> {
                           emergency,
                           isDark,
                           isFil,
+                          streetRoute: fullStreetRoute,
                           onClose: () =>
                               setFullState(() => activeSelected = null),
                         ),
@@ -1232,6 +1370,9 @@ class _EvacuationMapScreenState extends State<EvacuationMapScreen> {
     final isExplicitLine = _selectedCenter != null;
     final showGuideLine = guideTarget != null &&
         emergency.distanceToCenterKm(guideTarget) <= 30.0;
+    if (showGuideLine) {
+      _ensureStreetRoute(userPoint, guideTarget);
+    }
 
     final markers = _buildPriorityMarkers(
       centers: centers,
@@ -1242,6 +1383,8 @@ class _EvacuationMapScreenState extends State<EvacuationMapScreen> {
       isFil: isFil,
       onSelectCenter: (center) => _focusCenter(center),
     );
+
+    final isMapOfflineReady = _cachedTileCount >= 35;
 
     return Stack(
       children: [
@@ -1272,86 +1415,156 @@ class _EvacuationMapScreenState extends State<EvacuationMapScreen> {
           children: [
             _buildStyledTileLayer(isDark),
             if (showGuideLine)
-              PolylineLayer(
-                polylines: [
-                  Polyline(
-                    points: [
-                      userPoint,
-                      LatLng(
-                        guideTarget.latitude,
-                        guideTarget.longitude,
-                      ),
-                    ],
-                    strokeWidth: isExplicitLine ? 3.5 : 2.6,
-                    color: (guideTarget.isOpen
-                            ? (isDark
-                                ? Colors.tealAccent.shade200
-                                : Colors.teal.shade700)
-                            : Colors.blueGrey.shade500)
-                        .withAlpha(isExplicitLine ? 235 : 175),
-                    pattern: StrokePattern.dashed(
-                      segments: const [9, 7],
-                      patternFit: PatternFit.scaleUp,
-                    ),
-                  ),
-                ],
+              _buildRoutePolylineLayer(
+                userPoint: userPoint,
+                target: guideTarget,
+                streetRoute: _activeStreetRoute,
+                isExplicitLine: isExplicitLine,
+                isDark: isDark,
               ),
             MarkerLayer(markers: markers),
           ],
         ),
 
-        // Top-left Full-Screen Map Expand Button
+        // Top-left Full-Screen + 1-Tap Offline Manila Map Pills
         Positioned(
           top: 12,
           left: 12,
-          child: Material(
-            color: (isDark ? AppTheme.darkCard : Colors.white).withAlpha(244),
-            elevation: 2.5,
-            shadowColor: Colors.black.withAlpha(55),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(11),
-              side: BorderSide(
-                color: isDark ? AppTheme.darkBorder : AppTheme.lightBorder,
-              ),
-            ),
-            clipBehavior: Clip.antiAlias,
-            child: InkWell(
-              onTap: () => _openFullScreenNearbyMap(
-                context,
-                emergency,
-                centers,
-                isDark,
-                isFil,
-                isFarFromManila,
-              ),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 11,
-                  vertical: 8,
+          right: 60,
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            children: [
+              Material(
+                color: (isDark ? AppTheme.darkCard : Colors.white).withAlpha(244),
+                elevation: 2.5,
+                shadowColor: Colors.black.withAlpha(55),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(11),
+                  side: BorderSide(
+                    color: isDark ? AppTheme.darkBorder : AppTheme.lightBorder,
+                  ),
                 ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.open_in_full_rounded,
-                      size: 15,
-                      color: isDark
-                          ? Colors.lightBlue.shade200
-                          : AppTheme.primaryNavy,
+                clipBehavior: Clip.antiAlias,
+                child: InkWell(
+                  onTap: () => _openFullScreenNearbyMap(
+                    context,
+                    emergency,
+                    centers,
+                    isDark,
+                    isFil,
+                    isFarFromManila,
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 11,
+                      vertical: 8,
                     ),
-                    const SizedBox(width: 6),
-                    Text(
-                      isFil ? 'Buong Mapa' : 'Full Screen',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        color: isDark ? Colors.white : AppTheme.darkSlate,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.open_in_full_rounded,
+                          size: 15,
+                          color: isDark
+                              ? Colors.lightBlue.shade200
+                              : AppTheme.primaryNavy,
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          isFil ? 'Buong Mapa' : 'Full Screen',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: isDark ? Colors.white : AppTheme.darkSlate,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              if (supportsOfflineMapDownload)
+                Material(
+                  color: isMapOfflineReady
+                      ? (isDark
+                          ? const Color(0xFF064E3B).withAlpha(240)
+                          : const Color(0xFFECFDF5).withAlpha(248))
+                      : (isDark ? AppTheme.darkCard : Colors.white)
+                          .withAlpha(244),
+                  elevation: 2.5,
+                  shadowColor: Colors.black.withAlpha(55),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(11),
+                    side: BorderSide(
+                      color: isMapOfflineReady
+                          ? AppTheme.safeGreen.withAlpha(150)
+                          : (isDark
+                              ? AppTheme.darkBorder
+                              : AppTheme.lightBorder),
+                    ),
+                  ),
+                  clipBehavior: Clip.antiAlias,
+                  child: InkWell(
+                    onTap: _isDownloadingMap
+                        ? null
+                        : () => _handleDownloadOfflineMap(context, isFil),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 8,
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (_isDownloadingMap)
+                            SizedBox(
+                              width: 13,
+                              height: 13,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: isDark
+                                    ? Colors.tealAccent
+                                    : Colors.teal.shade700,
+                              ),
+                            )
+                          else
+                            Icon(
+                              isMapOfflineReady
+                                  ? Icons.offline_pin_rounded
+                                  : Icons.download_for_offline_outlined,
+                              size: 15,
+                              color: isMapOfflineReady
+                                  ? AppTheme.safeGreen
+                                  : (isDark
+                                      ? Colors.tealAccent
+                                      : Colors.teal.shade700),
+                            ),
+                          const SizedBox(width: 5),
+                          Text(
+                            _isDownloadingMap
+                                ? '$_mapDownloadDone/$_mapDownloadTotal'
+                                : (isMapOfflineReady
+                                    ? (isFil ? 'Offline Handa' : 'Offline Ready')
+                                    : (isFil ? 'Save Offline' : 'Save Map')),
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                              color: isMapOfflineReady
+                                  ? (isDark
+                                      ? const Color(0xFF6EE7B7)
+                                      : const Color(0xFF065F46))
+                                  : (isDark
+                                      ? Colors.white
+                                      : AppTheme.darkSlate),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                  ],
+                  ),
                 ),
-              ),
-            ),
+            ],
           ),
         ),
 
@@ -1463,6 +1676,7 @@ class _EvacuationMapScreenState extends State<EvacuationMapScreen> {
               emergency,
               isDark,
               isFil,
+              streetRoute: _activeStreetRoute,
             ),
           ),
       ],
@@ -1620,11 +1834,18 @@ class _EvacuationMapScreenState extends State<EvacuationMapScreen> {
     EmergencyProvider emergency,
     bool isDark,
     bool isFil, {
+    EvacuationRouteResult? streetRoute,
     VoidCallback? onClose,
   }) {
-    final distKm = emergency.distanceToCenterKm(center);
+    final hasRoad = streetRoute != null && streetRoute.isStreetRoute;
+    final distKm =
+        hasRoad ? streetRoute.distanceKm : emergency.distanceToCenterKm(center);
     final cardinal = emergency.bearingToCenter(center);
-    final etaText = _formatEta(distKm, isFil);
+    final etaText = hasRoad
+        ? (isFil
+            ? '~${streetRoute.walkMinutes} min lakad • ~${streetRoute.driveMinutes} min biyahe'
+            : '~${streetRoute.walkMinutes} min walk • ~${streetRoute.driveMinutes} min drive')
+        : _formatEta(distKm, isFil);
     final titleColor = isDark ? Colors.white : AppTheme.darkSlate;
     final subtleText = isDark ? Colors.white70 : AppTheme.mutedSlate;
 
@@ -1652,8 +1873,34 @@ class _EvacuationMapScreenState extends State<EvacuationMapScreen> {
                   ),
                 ),
                 const SizedBox(width: 6),
+                if (hasRoad) ...[
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.teal.withAlpha(isDark ? 55 : 22),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      streetRoute.fromOfflineCache
+                          ? (isFil ? 'Ruta (Offline)' : 'Cached Route')
+                          : (isFil ? 'Ruta sa Kalsada' : 'Street Route'),
+                      style: TextStyle(
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w800,
+                        color:
+                            isDark ? Colors.tealAccent : Colors.teal.shade800,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                ],
                 Text(
-                  '${distKm.toStringAsFixed(1)} km $cardinal',
+                  hasRoad
+                      ? '${distKm.toStringAsFixed(1)} km'
+                      : '${distKm.toStringAsFixed(1)} km $cardinal',
                   style: TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w800,

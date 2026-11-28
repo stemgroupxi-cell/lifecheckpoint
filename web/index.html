@@ -285,6 +285,102 @@
       } catch (e) {}
     };
 
+    // 1-Tap Offline City of Manila OpenStreetMap Tile Pack (z12-z15 -> lifecheckpoint-map-tiles-v1)
+    window.__lcManilaTileUrls = function () {
+      function lon2x(lon, z) {
+        return Math.floor(((lon + 180) / 360) * Math.pow(2, z));
+      }
+      function lat2y(lat, z) {
+        var rad = (lat * Math.PI) / 180;
+        return Math.floor(
+          ((1 - Math.log(Math.tan(rad) + 1 / Math.cos(rad)) / Math.PI) / 2) *
+            Math.pow(2, z)
+        );
+      }
+      var ranges = [
+        // Full City of Manila (z12-z14)
+        { z: 12, minLat: 14.552, maxLat: 14.636, minLng: 120.955, maxLng: 121.022 },
+        { z: 13, minLat: 14.552, maxLat: 14.636, minLng: 120.955, maxLng: 121.022 },
+        { z: 14, minLat: 14.552, maxLat: 14.636, minLng: 120.955, maxLng: 121.022 },
+        // Central Manila Shelter & Hospital Core (z15 street detail)
+        { z: 15, minLat: 14.560, maxLat: 14.605, minLng: 120.960, maxLng: 121.000 },
+      ];
+      var urls = [];
+      ranges.forEach(function (r) {
+        var x1 = lon2x(r.minLng, r.z);
+        var x2 = lon2x(r.maxLng, r.z);
+        var y1 = lat2y(r.maxLat, r.z);
+        var y2 = lat2y(r.minLat, r.z);
+        for (var x = x1; x <= x2; x++) {
+          for (var y = y1; y <= y2; y++) {
+            urls.push('https://tile.openstreetmap.org/' + r.z + '/' + x + '/' + y + '.png');
+          }
+        }
+      });
+      return urls;
+    };
+
+    window.__lcCountCachedMapTiles = async function () {
+      try {
+        if (!('caches' in window)) return 0;
+        var cache = await caches.open('lifecheckpoint-map-tiles-v1');
+        var keys = await cache.keys();
+        return keys.length;
+      } catch (e) {
+        return 0;
+      }
+    };
+
+    window.__lcCacheManilaMapTiles = async function (onProgress) {
+      try {
+        if (!('caches' in window)) return 0;
+        var cache = await caches.open('lifecheckpoint-map-tiles-v1');
+        var urls = window.__lcManilaTileUrls();
+        var total = urls.length;
+        var done = 0;
+        var cachedCount = 0;
+
+        async function fetchOne(url) {
+          try {
+            var hit = await cache.match(url);
+            if (hit) {
+              cachedCount++;
+              return;
+            }
+            var res = null;
+            try {
+              res = await fetch(url, { mode: 'cors', credentials: 'omit' });
+            } catch (_) {
+              res = await fetch(url, { mode: 'no-cors', credentials: 'omit' });
+            }
+            if (res && (res.ok || res.type === 'opaque')) {
+              await cache.put(url, res.clone());
+              cachedCount++;
+            }
+          } catch (_) {
+            // Skip individual tile errors gracefully
+          } finally {
+            done++;
+            if (typeof onProgress === 'function') {
+              try { onProgress(done, total); } catch (_) {}
+            }
+          }
+        }
+
+        // Polite staggered batches of 3 tiles to respect OSM tile servers
+        for (var i = 0; i < urls.length; i += 3) {
+          var batch = urls.slice(i, i + 3);
+          await Promise.all(batch.map(fetchOne));
+          if (i + 3 < urls.length) {
+            await new Promise(function (r) { setTimeout(r, 110); });
+          }
+        }
+        return cachedCount;
+      } catch (e) {
+        return 0;
+      }
+    };
+
     window.addEventListener('flutter-first-frame', function () {
       var splash = document.getElementById('lc-splash');
       if (splash) {
